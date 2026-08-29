@@ -1,0 +1,318 @@
+Setting Up Jenkins Master-Agent Architecture
+Lab Objectives
+By the end of this lab, you will be able to:
+
+Understand the concept and benefits of Jenkins master-agent architecture
+Install and configure Jenkins on a Linux system
+Set up Jenkins agent nodes on the same machine using different ports
+Establish secure communication between Jenkins master and agent nodes
+Verify proper connectivity and job distribution between master and agents
+Configure agents to execute build jobs independently
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Linux command line operations
+Familiarity with file permissions and user management in Linux
+Basic knowledge of networking concepts (ports, localhost)
+Understanding of what Jenkins is and its basic functionality
+Experience with text editors like nano or vim
+Lab Environment Setup
+Note: Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated Linux environment. The provided machine is bare metal with no pre-installed tools, so you will install all required software during this lab.
+
+Task 1: Install and Configure Jenkins Master
+Subtask 1.1: Update System and Install Java
+Jenkins requires Java to run. Let's start by updating the system and installing OpenJDK.
+
+# Update package repository
+sudo apt update
+
+# Install OpenJDK 11 (required for Jenkins)
+sudo apt install -y openjdk-11-jdk
+
+# Verify Java installation
+java -version
+Subtask 1.2: Install Jenkins Master
+Now we'll install Jenkins using the official repository.
+
+# Add Jenkins repository key
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee \
+    /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+
+# Add Jenkins repository
+echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
+    https://pkg.jenkins.io/debian-stable binary/ | sudo tee \
+    /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Update package list
+sudo apt update
+
+# Install Jenkins
+sudo apt install -y jenkins
+
+# Start Jenkins service
+sudo systemctl start jenkins
+
+# Enable Jenkins to start on boot
+sudo systemctl enable jenkins
+
+# Check Jenkins status
+sudo systemctl status jenkins
+Subtask 1.3: Configure Jenkins Master Initial Setup
+# Get the initial admin password
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+Note: Copy this password as you'll need it for the web interface setup.
+
+Open a web browser and navigate to http://localhost:8080. Complete the initial setup:
+
+Enter the initial admin password
+Select Install suggested plugins
+Create an admin user with these details:
+Username: admin
+Password: admin123
+Full name: Jenkins Admin
+Email: admin@localhost
+Keep the default Jenkins URL: http://localhost:8080/
+Task 2: Set Up Jenkins Agent Nodes
+Subtask 2.1: Create Agent User and Directory Structure
+We'll create a dedicated user for the Jenkins agent and set up the necessary directories.
+
+# Create jenkins-agent user
+sudo useradd -m -s /bin/bash jenkins-agent
+
+# Create agent working directory
+sudo mkdir -p /home/jenkins-agent/agent-workspace
+
+# Set proper ownership
+sudo chown -R jenkins-agent:jenkins-agent /home/jenkins-agent/
+
+# Create SSH directory for the agent user
+sudo mkdir -p /home/jenkins-agent/.ssh
+sudo chown jenkins-agent:jenkins-agent /home/jenkins-agent/.ssh
+sudo chmod 700 /home/jenkins-agent/.ssh
+Subtask 2.2: Generate SSH Keys for Agent Communication
+# Switch to jenkins user
+sudo su - jenkins
+
+# Generate SSH key pair (press Enter for all prompts to use defaults)
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/jenkins_agent_key
+
+# Copy public key to agent user's authorized_keys
+sudo cp ~/.ssh/jenkins_agent_key.pub /home/jenkins-agent/.ssh/authorized_keys
+
+# Set proper permissions
+sudo chown jenkins-agent:jenkins-agent /home/jenkins-agent/.ssh/authorized_keys
+sudo chmod 600 /home/jenkins-agent/.ssh/authorized_keys
+
+# Exit from jenkins user
+exit
+Subtask 2.3: Download Jenkins Agent JAR File
+# Create directory for agent JAR file
+sudo mkdir -p /home/jenkins-agent/bin
+
+# Download the agent JAR file from Jenkins master
+wget http://localhost:8080/jnlpJars/agent.jar -O /home/jenkins-agent/bin/agent.jar
+
+# Set proper ownership
+sudo chown jenkins-agent:jenkins-agent /home/jenkins-agent/bin/agent.jar
+Task 3: Configure Master-Agent Connection
+Subtask 3.1: Add Agent Node in Jenkins Web Interface
+Open Jenkins web interface at http://localhost:8080
+Log in with admin credentials (admin/admin123)
+Navigate to Manage Jenkins → Manage Nodes and Clouds
+Click New Node
+Configure the agent with these settings:
+Node name: linux-agent-1
+Type: Select Permanent Agent
+Click Create
+Subtask 3.2: Configure Agent Node Settings
+Fill in the agent configuration form:
+
+Description: Linux Agent Node 1
+Number of executors: 2
+Remote root directory: /home/jenkins-agent/agent-workspace
+Labels: linux ubuntu agent-1
+Usage: Use this node as much as possible
+Launch method: Launch agents via SSH
+Host: localhost
+Credentials: Click Add → Jenkins
+Subtask 3.3: Add SSH Credentials
+In the credentials dialog:
+
+Kind: SSH Username with private key
+Scope: Global
+ID: jenkins-agent-ssh
+Description: SSH key for Jenkins agent
+Username: jenkins-agent
+Private Key: Select Enter directly
+Copy the private key content:
+# Display the private key (copy this output)
+sudo cat /var/lib/jenkins/.ssh/jenkins_agent_key
+Paste the private key content into the text area
+Click Add
+Subtask 3.4: Complete Agent Configuration
+Continue with the agent configuration:
+
+Credentials: Select jenkins-agent (SSH key for Jenkins agent)
+Host Key Verification Strategy: Non verifying Verification Strategy
+Availability: Keep this agent online as much as possible
+Click Save to create the agent.
+
+Task 4: Verify Master-Agent Communication
+Subtask 4.1: Check Agent Connection Status
+In Jenkins web interface, go to Manage Jenkins → Manage Nodes and Clouds
+You should see linux-agent-1 in the node list
+Click on the agent name to view its status
+The agent should show as Connected with a green indicator
+If the agent shows as offline, click Launch agent to manually start it.
+
+Subtask 4.2: Create Test Job for Agent Verification
+Let's create a simple job to test the master-agent communication:
+
+From Jenkins dashboard, click New Item
+Enter job name: test-agent-connection
+Select Freestyle project
+Click OK
+Configure the job:
+
+Description: Test job to verify agent connectivity
+Restrict where this project can be run: Check this option
+Label Expression: linux
+Build Steps: Click Add build step → Execute shell
+Add this shell script:
+
+#!/bin/bash
+echo "=== Agent Connection Test ==="
+echo "Job running on: $(hostname)"
+echo "Current user: $(whoami)"
+echo "Working directory: $(pwd)"
+echo "Java version:"
+java -version
+echo "=== Test completed successfully ==="
+Click Save.
+
+Subtask 4.3: Execute Test Job
+Click Build Now to run the job
+Wait for the build to complete
+Click on the build number (e.g., #1) in the Build History
+Click Console Output to view the results
+You should see output indicating the job ran on the agent node.
+
+Subtask 4.4: Verify Agent Workspace
+Check that the agent workspace was created and used:
+
+# List contents of agent workspace
+sudo ls -la /home/jenkins-agent/agent-workspace/
+
+# Check for job workspace
+sudo find /home/jenkins-agent/agent-workspace/ -name "*test-agent-connection*" -type d
+Task 5: Set Up Additional Agent Node
+Subtask 5.1: Create Second Agent Configuration
+To demonstrate true master-agent architecture, let's add a second agent:
+
+In Jenkins, go to Manage Jenkins → Manage Nodes and Clouds
+Click New Node
+Node name: linux-agent-2
+Copy from: linux-agent-1
+Click Create
+Subtask 5.2: Configure Second Agent
+Modify the configuration:
+
+Description: Linux Agent Node 2
+Remote root directory: /home/jenkins-agent/agent-workspace-2
+Labels: linux ubuntu agent-2
+Create the workspace directory:
+
+# Create second agent workspace
+sudo mkdir -p /home/jenkins-agent/agent-workspace-2
+sudo chown jenkins-agent:jenkins-agent /home/jenkins-agent/agent-workspace-2
+Click Save.
+
+Subtask 5.3: Test Multi-Agent Setup
+Create a job that can run on any agent:
+
+Create new job: multi-agent-test
+Restrict where this project can be run: linux
+Build Steps → Execute shell:
+#!/bin/bash
+echo "=== Multi-Agent Test ==="
+echo "Agent hostname: $(hostname)"
+echo "Agent user: $(whoami)"
+echo "Workspace: $(pwd)"
+echo "Agent label: $NODE_LABELS"
+echo "Build number: $BUILD_NUMBER"
+echo "=== End Test ==="
+Build Triggers: Check Build periodically and set to H/2 * * * * (every 2 minutes)
+Save and run the job multiple times
+Task 6: Monitor and Manage Agent Performance
+Subtask 6.1: Check Agent System Resources
+Create a monitoring job to check agent resources:
+
+Create job: agent-monitoring
+Label Expression: linux
+Execute shell:
+#!/bin/bash
+echo "=== Agent System Monitoring ==="
+echo "Date: $(date)"
+echo "Uptime: $(uptime)"
+echo "Memory usage:"
+free -h
+echo "Disk usage:"
+df -h /home/jenkins-agent/
+echo "Running processes:"
+ps aux | grep jenkins | head -5
+echo "=== Monitoring Complete ==="
+Subtask 6.2: Configure Agent Offline Behavior
+Go to Manage Jenkins → Manage Nodes and Clouds
+Click on linux-agent-1
+Click Configure
+Under Availability, select Take this agent offline when idle
+Set In demand delay: 1 minute
+Set Idle delay: 5 minutes
+Save the configuration
+Troubleshooting Common Issues
+Issue 1: Agent Cannot Connect
+If the agent shows as offline:
+
+# Check SSH connectivity
+sudo -u jenkins ssh -i /var/lib/jenkins/.ssh/jenkins_agent_key jenkins-agent@localhost
+
+# Check Jenkins agent log
+sudo tail -f /var/log/jenkins/jenkins.log
+
+# Restart Jenkins service
+sudo systemctl restart jenkins
+Issue 2: Permission Denied Errors
+# Fix ownership issues
+sudo chown -R jenkins-agent:jenkins-agent /home/jenkins-agent/
+
+# Check SSH key permissions
+sudo chmod 600 /var/lib/jenkins/.ssh/jenkins_agent_key
+sudo chmod 644 /var/lib/jenkins/.ssh/jenkins_agent_key.pub
+Issue 3: Java Not Found on Agent
+# Install Java on agent user environment
+sudo apt install -y openjdk-11-jdk
+
+# Add Java to agent user's PATH
+echo 'export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64' | sudo tee -a /home/jenkins-agent/.bashrc
+echo 'export PATH=$JAVA_HOME/bin:$PATH' | sudo tee -a /home/jenkins-agent/.bashrc
+Lab Verification Checklist
+Verify your setup by checking these items:
+
+ Jenkins master is running on port 8080
+ At least one agent node shows as Connected
+ Test jobs can execute successfully on agent nodes
+ Agent workspaces are created and accessible
+ SSH communication between master and agents works
+ Jobs can be distributed across multiple agents
+ Agent monitoring shows system resources correctly
+Conclusion
+In this lab, you have successfully implemented a Jenkins master-agent architecture on a single Linux machine. You learned how to:
+
+Install and configure Jenkins master server
+Set up agent nodes with proper SSH communication
+Establish secure connections between master and agents
+Verify job distribution and execution across agents
+Monitor agent performance and resource usage
+This master-agent architecture is crucial for scaling Jenkins in production environments. It allows you to distribute build workloads across multiple machines, isolate different types of builds, and provide better resource utilization. The skills you've gained here form the foundation for managing larger, more complex Jenkins deployments in enterprise environments.
+
+The architecture you've built demonstrates how Jenkins can efficiently manage multiple build environments while maintaining centralized control and monitoring through the master node.
