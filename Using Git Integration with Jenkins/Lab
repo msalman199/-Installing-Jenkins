@@ -1,0 +1,703 @@
+Using Git Integration with Jenkins
+Lab Objectives
+By the end of this lab, you will be able to:
+
+Install and configure Jenkins on a Linux machine
+Set up a GitHub repository for continuous integration
+Configure Jenkins to automatically trigger builds when code is pushed to GitHub
+Create a Jenkins pipeline that integrates with a Git repository
+Understand webhook configuration for automated build triggering
+Troubleshoot common Git-Jenkins integration issues
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Git version control concepts
+Familiarity with Linux command line operations
+Basic knowledge of software development workflows
+Understanding of what continuous integration means
+A GitHub account (free account is sufficient)
+Lab Environment
+Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated Linux machine. The provided machine is bare metal with no pre-installed tools, so you will install all required software during the lab exercises.
+
+Task 1: Environment Setup and Jenkins Installation
+Subtask 1.1: Update System and Install Prerequisites
+First, update your Linux system and install the necessary dependencies.
+
+# Update package lists
+sudo apt update
+
+# Install Java (required for Jenkins)
+sudo apt install -y openjdk-11-jdk
+
+# Verify Java installation
+java -version
+
+# Install curl and wget for downloading packages
+sudo apt install -y curl wget gnupg2 software-properties-common
+Subtask 1.2: Install Jenkins
+Install Jenkins using the official repository to ensure you get the latest stable version.
+
+# Add Jenkins repository key
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee \
+  /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+
+# Add Jenkins repository
+echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
+  https://pkg.jenkins.io/debian-stable binary/ | sudo tee \
+  /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Update package lists
+sudo apt update
+
+# Install Jenkins
+sudo apt install -y jenkins
+
+# Start Jenkins service
+sudo systemctl start jenkins
+
+# Enable Jenkins to start on boot
+sudo systemctl enable jenkins
+
+# Check Jenkins status
+sudo systemctl status jenkins
+Subtask 1.3: Configure Jenkins Initial Setup
+Access Jenkins through the web interface and complete the initial setup.
+
+# Get the initial admin password
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+Open a web browser and navigate to http://localhost:8080
+Enter the initial admin password you retrieved above
+Click Install suggested plugins
+Wait for the plugin installation to complete
+Create your first admin user with the following details:
+Username: admin
+Password: admin123
+Full name: Jenkins Admin
+Email: admin@localhost
+Keep the default Jenkins URL as http://localhost:8080/
+Click Save and Finish
+Subtask 1.4: Install Git on the System
+Install Git which will be used by Jenkins to interact with repositories.
+
+# Install Git
+sudo apt install -y git
+
+# Verify Git installation
+git --version
+
+# Configure Git with basic settings
+git config --global user.name "Jenkins User"
+git config --global user.email "jenkins@localhost"
+Task 2: Create and Configure GitHub Repository
+Subtask 2.1: Create a Sample Project Repository
+Log in to your GitHub account
+Click the + icon in the top right corner
+Select New repository
+Configure the repository:
+Repository name: jenkins-integration-demo
+Description: Demo project for Jenkins integration
+Set to Public
+Check Add a README file
+Add .gitignore template: Node
+Choose license: MIT License
+Click Create repository
+Subtask 2.2: Clone Repository and Add Sample Code
+Clone the repository to your local machine and add a simple application.
+
+# Navigate to home directory
+cd ~
+
+# Clone your repository (replace YOUR_USERNAME with your GitHub username)
+git clone https://github.com/YOUR_USERNAME/jenkins-integration-demo.git
+
+# Navigate to the project directory
+cd jenkins-integration-demo
+
+# Create a simple Node.js application
+cat > app.js << 'EOF'
+const http = require('http');
+
+const hostname = '127.0.0.1';
+const port = 3000;
+
+const server = http.createServer((req, res) => {
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'text/plain');
+  res.end('Hello World from Jenkins Integration Demo!\n');
+});
+
+server.listen(port, hostname, () => {
+  console.log(`Server running at http://${hostname}:${port}/`);
+});
+EOF
+
+# Create package.json file
+cat > package.json << 'EOF'
+{
+  "name": "jenkins-integration-demo",
+  "version": "1.0.0",
+  "description": "Demo project for Jenkins integration",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "echo \"Running tests...\" && echo \"All tests passed!\""
+  },
+  "author": "Jenkins User",
+  "license": "MIT"
+}
+EOF
+
+# Create a simple test script
+mkdir -p test
+cat > test/app.test.js << 'EOF'
+// Simple test file
+console.log('Running application tests...');
+
+// Simulate test execution
+setTimeout(() => {
+  console.log('Test 1: Application starts successfully - PASSED');
+  console.log('Test 2: Server responds to requests - PASSED');
+  console.log('All tests completed successfully!');
+  process.exit(0);
+}, 1000);
+EOF
+Subtask 2.3: Commit and Push Initial Code
+# Add all files to Git
+git add .
+
+# Commit the changes
+git commit -m "Initial commit: Add Node.js application with tests"
+
+# Push to GitHub
+git push origin main
+Task 3: Configure Jenkins Job for Git Integration
+Subtask 3.1: Install Required Jenkins Plugins
+In Jenkins web interface, go to Manage Jenkins > Manage Plugins
+Click on the Available tab
+Search for and install the following plugins:
+Git plugin (if not already installed)
+GitHub plugin
+GitHub Integration Plugin
+NodeJS Plugin
+Check Restart Jenkins when installation is complete and no jobs are running
+Wait for Jenkins to restart
+Subtask 3.2: Configure NodeJS in Jenkins
+Go to Manage Jenkins > Global Tool Configuration
+Scroll down to NodeJS section
+Click Add NodeJS
+Configure:
+Name: NodeJS-16
+Check Install automatically
+Version: Select latest LTS version (e.g., NodeJS 16.20.0)
+Click Save
+Subtask 3.3: Create a New Jenkins Job
+From Jenkins dashboard, click New Item
+Enter item name: jenkins-git-integration-demo
+Select Freestyle project
+Click OK
+Subtask 3.4: Configure Source Code Management
+In the job configuration page, scroll to Source Code Management
+Select Git
+In Repository URL, enter your GitHub repository URL:
+https://github.com/YOUR_USERNAME/jenkins-integration-demo.git
+Leave Credentials as - none - (for public repositories)
+In Branches to build, ensure it shows */main
+Subtask 3.5: Configure Build Environment
+In Build Environment section, check Provide Node & npm bin/ folder to PATH
+Select NodeJS-16 from the dropdown
+Subtask 3.6: Add Build Steps
+In Build section, click Add build step > Execute shell
+Enter the following build script:
+#!/bin/bash
+echo "Starting build process..."
+echo "Current directory: $(pwd)"
+echo "Files in directory:"
+ls -la
+
+echo "Installing dependencies..."
+npm install
+
+echo "Running tests..."
+npm test
+
+echo "Starting application (background process for testing)..."
+timeout 10s npm start &
+APP_PID=$!
+
+echo "Waiting for application to start..."
+sleep 3
+
+echo "Testing application endpoint..."
+curl -f http://127.0.0.1:3000 || echo "Application test failed"
+
+echo "Stopping application..."
+kill $APP_PID 2>/dev/null || true
+
+echo "Build completed successfully!"
+Click Save
+Subtask 3.7: Test Manual Build
+From the job page, click Build Now
+Click on the build number in Build History
+Click Console Output to view the build logs
+Verify that the build completes successfully
+Task 4: Set Up Automated Git Push Triggers
+Subtask 4.1: Configure Webhook in GitHub
+Go to your GitHub repository
+Click on Settings tab
+Click on Webhooks in the left sidebar
+Click Add webhook
+Configure the webhook:
+Payload URL: http://YOUR_JENKINS_IP:8080/github-webhook/
+Content type: application/json
+Which events: Select Just the push event
+Active: Check this box
+Click Add webhook
+Note: Since we're working on a local machine, GitHub cannot directly reach your Jenkins instance. For this lab, we'll simulate the webhook functionality using polling.
+
+Subtask 4.2: Configure Jenkins for Git Polling
+Go back to your Jenkins job configuration
+In Build Triggers section, check Poll SCM
+In the Schedule field, enter:
+H/2 * * * *
+This will check for changes every 2 minutes.
+Click Save
+Subtask 4.3: Test Automated Build Trigger
+Make a change to your repository to test the automated build trigger.
+
+# Navigate to your project directory
+cd ~/jenkins-integration-demo
+
+# Make a simple change to the application
+cat >> app.js << 'EOF'
+
+// Added feature: current timestamp
+console.log('Application started at:', new Date().toISOString());
+EOF
+
+# Commit and push the change
+git add app.js
+git commit -m "Add timestamp logging feature"
+git push origin main
+Wait for 2-3 minutes and check Jenkins dashboard to see if a new build is triggered automatically.
+
+Subtask 4.4: Configure Build Status Notifications
+Create a simple script to demonstrate build status handling.
+
+In your Jenkins job configuration, scroll to Post-build Actions
+Click Add post-build action > Execute shell
+Add the following script:
+#!/bin/bash
+echo "Build completed with status: SUCCESS"
+echo "Timestamp: $(date)"
+echo "Build number: $BUILD_NUMBER"
+echo "Git commit: $GIT_COMMIT"
+
+# Create a simple build report
+cat > build-report.txt << EOF
+Build Report
+============
+Job Name: $JOB_NAME
+Build Number: $BUILD_NUMBER
+Build Status: SUCCESS
+Git Branch: $GIT_BRANCH
+Git Commit: $GIT_COMMIT
+Build Timestamp: $(date)
+EOF
+
+echo "Build report created successfully"
+Click Save
+Task 5: Advanced Git Integration Features
+Subtask 5.1: Configure Multiple Branch Building
+Go to your Jenkins job configuration
+In Source Code Management > Git section
+In Branches to build, change from */main to */*
+This will build all branches when changes are detected
+Subtask 5.2: Create and Test Feature Branch
+Create a feature branch to test multi-branch building.
+
+# Navigate to project directory
+cd ~/jenkins-integration-demo
+
+# Create and switch to feature branch
+git checkout -b feature/enhanced-logging
+
+# Add enhanced logging feature
+cat > logger.js << 'EOF'
+class Logger {
+    static info(message) {
+        console.log(`[INFO] ${new Date().toISOString()}: ${message}`);
+    }
+    
+    static error(message) {
+        console.error(`[ERROR] ${new Date().toISOString()}: ${message}`);
+    }
+}
+
+module.exports = Logger;
+EOF
+
+# Update app.js to use the logger
+cat > app.js << 'EOF'
+const http = require('http');
+const Logger = require('./logger');
+
+const hostname = '127.0.0.1';
+const port = 3000;
+
+const server = http.createServer((req, res) => {
+  Logger.info(`Received request from ${req.connection.remoteAddress}`);
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'text/plain');
+  res.end('Hello World from Jenkins Integration Demo!\n');
+});
+
+server.listen(port, hostname, () => {
+  Logger.info(`Server running at http://${hostname}:${port}/`);
+});
+
+// Added feature: current timestamp
+Logger.info('Application started at: ' + new Date().toISOString());
+EOF
+
+# Commit and push feature branch
+git add .
+git commit -m "Add enhanced logging functionality"
+git push origin feature/enhanced-logging
+Subtask 5.3: Configure Build Parameters
+In Jenkins job configuration, check This project is parameterized
+Click Add Parameter > String Parameter
+Configure:
+Name: GIT_BRANCH_NAME
+Default Value: main
+Description: Git branch to build
+Update the Source Code Management > Branches to build to: */${GIT_BRANCH_NAME}
+Click Save
+Task 6: Monitoring and Troubleshooting
+Subtask 6.1: Set Up Build History Monitoring
+Create a script to monitor build history and status.
+
+# Create monitoring script
+cat > ~/monitor-builds.sh << 'EOF'
+#!/bin/bash
+
+echo "Jenkins Build Monitor"
+echo "===================="
+echo "Timestamp: $(date)"
+echo ""
+
+# Check Jenkins service status
+echo "Jenkins Service Status:"
+sudo systemctl status jenkins --no-pager -l
+echo ""
+
+# Check recent build logs (if available)
+echo "Recent Jenkins Activity:"
+if [ -d "/var/lib/jenkins/jobs" ]; then
+    find /var/lib/jenkins/jobs -name "builds" -type d | head -5
+fi
+echo ""
+
+# Check Git status in project
+if [ -d "~/jenkins-integration-demo" ]; then
+    cd ~/jenkins-integration-demo
+    echo "Git Repository Status:"
+    git status --porcelain
+    echo "Latest commits:"
+    git log --oneline -5
+fi
+EOF
+
+chmod +x ~/monitor-builds.sh
+
+# Run the monitoring script
+~/monitor-builds.sh
+Subtask 6.2: Common Troubleshooting Steps
+Create a troubleshooting guide and test common issues.
+
+# Create troubleshooting script
+cat > ~/jenkins-troubleshoot.sh << 'EOF'
+#!/bin/bash
+
+echo "Jenkins Troubleshooting Guide"
+echo "============================"
+
+echo "1. Checking Jenkins Service..."
+if sudo systemctl is-active --quiet jenkins; then
+    echo "   ✓ Jenkins service is running"
+else
+    echo "   ✗ Jenkins service is not running"
+    echo "   Fix: sudo systemctl start jenkins"
+fi
+
+echo ""
+echo "2. Checking Java Installation..."
+if java -version >/dev/null 2>&1; then
+    echo "   ✓ Java is installed"
+    java -version 2>&1 | head -1
+else
+    echo "   ✗ Java is not installed"
+    echo "   Fix: sudo apt install openjdk-11-jdk"
+fi
+
+echo ""
+echo "3. Checking Git Installation..."
+if git --version >/dev/null 2>&1; then
+    echo "   ✓ Git is installed"
+    git --version
+else
+    echo "   ✗ Git is not installed"
+    echo "   Fix: sudo apt install git"
+fi
+
+echo ""
+echo "4. Checking Jenkins Port..."
+if netstat -tlnp 2>/dev/null | grep -q ":8080"; then
+    echo "   ✓ Jenkins is listening on port 8080"
+else
+    echo "   ✗ Jenkins is not listening on port 8080"
+    echo "   Check: sudo netstat -tlnp | grep java"
+fi
+
+echo ""
+echo "5. Checking Jenkins Logs..."
+echo "   Recent Jenkins log entries:"
+sudo tail -5 /var/log/jenkins/jenkins.log 2>/dev/null || echo "   Log file not accessible"
+
+echo ""
+echo "6. Checking Disk Space..."
+df -h / | tail -1 | awk '{print "   Disk usage: " $5 " of " $2 " used"}'
+
+echo ""
+echo "Troubleshooting completed!"
+EOF
+
+chmod +x ~/jenkins-troubleshoot.sh
+
+# Run troubleshooting
+~/jenkins-troubleshoot.sh
+Task 7: Testing the Complete Integration
+Subtask 7.1: End-to-End Integration Test
+Perform a complete test of the Git-Jenkins integration.
+
+# Navigate to project directory
+cd ~/jenkins-integration-demo
+
+# Create a comprehensive test change
+cat > integration-test.js << 'EOF'
+const http = require('http');
+
+// Integration test for the application
+function runIntegrationTest() {
+    console.log('Starting integration test...');
+    
+    const options = {
+        hostname: '127.0.0.1',
+        port: 3000,
+        path: '/',
+        method: 'GET'
+    };
+    
+    const req = http.request(options, (res) => {
+        console.log(`Status Code: ${res.statusCode}`);
+        
+        let data = '';
+        res.on('data', (chunk) => {
+            data += chunk;
+        });
+        
+        res.on('end', () => {
+            console.log('Response:', data);
+            console.log('Integration test completed successfully!');
+        });
+    });
+    
+    req.on('error', (error) => {
+        console.error('Integration test failed:', error);
+    });
+    
+    req.end();
+}
+
+// Export for use in other modules
+module.exports = { runIntegrationTest };
+
+// Run test if called directly
+if (require.main === module) {
+    runIntegrationTest();
+}
+EOF
+
+# Update package.json to include integration test
+cat > package.json << 'EOF'
+{
+  "name": "jenkins-integration-demo",
+  "version": "1.1.0",
+  "description": "Demo project for Jenkins integration",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "echo \"Running tests...\" && node test/app.test.js",
+    "integration-test": "node integration-test.js"
+  },
+  "author": "Jenkins User",
+  "license": "MIT"
+}
+EOF
+
+# Commit and push the integration test
+git add .
+git commit -m "Add integration test functionality"
+git push origin main
+Subtask 7.2: Verify Automated Build Execution
+Wait for Jenkins to detect the changes (up to 2 minutes due to polling)
+Check Jenkins dashboard for new build
+Monitor the build progress and verify it completes successfully
+Review the console output to ensure all tests pass
+Subtask 7.3: Create Build Summary Report
+Generate a comprehensive report of your Jenkins-Git integration setup.
+
+# Create summary report
+cat > ~/jenkins-integration-summary.md << 'EOF'
+# Jenkins-Git Integration Lab Summary
+
+## Completed Tasks
+
+### 1. Environment Setup
+- ✓ Installed Java 11
+- ✓ Installed Jenkins
+- ✓ Configured Jenkins initial setup
+- ✓ Installed Git
+
+### 2. GitHub Repository Setup
+- ✓ Created repository: jenkins-integration-demo
+- ✓ Added Node.js application
+- ✓ Configured package.json with test scripts
+- ✓ Pushed initial code to main branch
+
+### 3. Jenkins Job Configuration
+- ✓ Installed required plugins (Git, GitHub, NodeJS)
+- ✓ Configured NodeJS tool
+- ✓ Created freestyle project
+- ✓ Configured Git source code management
+- ✓ Set up build steps with shell scripts
+
+### 4. Automated Triggering
+- ✓ Configured SCM polling (every 2 minutes)
+- ✓ Tested automated build on code push
+- ✓ Set up post-build actions
+
+### 5. Advanced Features
+- ✓ Multi-branch building configuration
+- ✓ Build parameters setup
+- ✓ Feature branch testing
+
+### 6. Monitoring and Troubleshooting
+- ✓ Created monitoring scripts
+- ✓ Set up troubleshooting tools
+- ✓ Verified service health checks
+
+### 7. Integration Testing
+- ✓ End-to-end workflow testing
+- ✓ Integration test implementation
+- ✓ Build verification
+
+## Key Achievements
+
+1. **Automated CI/CD Pipeline**: Successfully created a Jenkins job that automatically builds and tests code when changes are pushed to Git.
+
+2. **Git Integration**: Configured Jenkins to work seamlessly with GitHub repository, including branch management and change detection.
+
+3. **Build Automation**: Implemented comprehensive build scripts that install dependencies, run tests, and verify application functionality.
+
+4. **Monitoring Setup**: Created tools for monitoring build status and troubleshooting common issues.
+
+## Repository Information
+- Repository: jenkins-integration-demo
+- Main Application: Node.js HTTP server
+- Test Framework: Custom test scripts
+- Build Tool: npm
+- CI/CD Tool: Jenkins
+
+## Next Steps
+- Consider implementing webhook integration for real-time triggering
+- Add more comprehensive test suites
+- Explore Jenkins Pipeline as Code (Jenkinsfile)
+- Implement deployment automation
+EOF
+
+echo "Integration summary report created at ~/jenkins-integration-summary.md"
+cat ~/jenkins-integration-summary.md
+Troubleshooting Common Issues
+Issue 1: Jenkins Service Won't Start
+Symptoms: Jenkins service fails to start or stops unexpectedly.
+
+Solutions:
+
+# Check Java installation
+java -version
+
+# Check Jenkins service logs
+sudo journalctl -u jenkins -f
+
+# Restart Jenkins service
+sudo systemctl restart jenkins
+
+# Check port availability
+sudo netstat -tlnp | grep 8080
+Issue 2: Git Repository Access Issues
+Symptoms: Jenkins cannot clone or access the Git repository.
+
+Solutions:
+
+# Verify Git configuration
+git config --list
+
+# Test repository access manually
+git clone https://github.com/YOUR_USERNAME/jenkins-integration-demo.git test-clone
+
+# Check Jenkins user permissions
+sudo -u jenkins git clone https://github.com/YOUR_USERNAME/jenkins-integration-demo.git
+Issue 3: Build Failures
+Symptoms: Jenkins builds fail with various errors.
+
+Solutions:
+
+# Check Node.js installation in Jenkins
+# Go to Manage Jenkins > Global Tool Configuration > NodeJS
+
+# Verify build script syntax
+bash -n your-build-script.sh
+
+# Check workspace permissions
+sudo chown -R jenkins:jenkins /var/lib/jenkins/workspace/
+Issue 4: Polling Not Working
+Symptoms: Jenkins doesn't detect Git changes automatically.
+
+Solutions:
+
+Verify SCM polling configuration in job settings
+Check Jenkins system clock synchronization
+Review Git repository URL format
+Ensure proper branch specification
+Conclusion
+In this comprehensive lab, you have successfully:
+
+Set up a complete CI/CD environment using Jenkins and Git integration on a single Linux machine
+Configured automated build triggering that responds to code changes in your Git repository
+Implemented a full build pipeline that includes dependency installation, testing, and application verification
+Created monitoring and troubleshooting tools to maintain your CI/CD system
+Tested the entire workflow from code commit to automated build execution
+This integration between Jenkins and Git represents a fundamental DevOps practice that enables:
+
+Continuous Integration: Automatic building and testing of code changes
+Early Error Detection: Quick identification of issues when code is committed
+Consistent Build Process: Standardized build procedures across all code changes
+Improved Code Quality: Automated testing ensures code meets quality standards
+Faster Development Cycles: Reduced manual intervention in build and test processes
+The skills you've developed in this lab form the foundation for more advanced DevOps practices, including continuous deployment, infrastructure as code, and automated testing strategies. You can now extend this setup to include additional features like:
+
+Multiple environment deployments (development, staging, production)
+Integration with other tools like Docker for containerization
+Advanced testing frameworks and code quality analysis
+Notification systems for build status updates
+Your Jenkins-Git integration is now ready for real-world development workflows, providing a solid foundation for modern software development practices.
