@@ -1,0 +1,14 @@
+{
+  "name": "jenkins-demo",
+  "version": "1.0.0",
+  "description": "Demo application for Jenkins pipeline",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "mocha test.js --timeout 5000"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "mocha": "^10.0.0"
+  }
+}
