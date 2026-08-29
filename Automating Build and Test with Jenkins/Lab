@@ -1,0 +1,526 @@
+Automating Build and Test with Jenkins
+Objectives
+By the end of this lab, students will be able to:
+
+Install and configure Jenkins on a Linux machine
+Create and configure Jenkins pipelines using a Jenkinsfile
+Define build, test, and packaging stages in a Jenkins pipeline
+Automate the build process for a Java application using Maven
+Implement automated testing and code coverage reporting after the build stage
+Configure real, working build notifications using logging and email
+Monitor, troubleshoot, and analyze Jenkins pipeline executions
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Linux command line operations
+Familiarity with the Git version control system
+Basic knowledge of Java programming and the Maven build tool
+Understanding of software development lifecycle concepts
+Experience with text editors such as nano or vim
+Note: Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated Linux machine. The provided machine is bare metal with no pre-installed tools, so you will install all required software during the lab exercises. All install commands below are given explicitly and should be run as shown.
+
+Lab Environment Setup
+# Update the package manager
+sudo apt update && sudo apt upgrade -y
+
+# Install OpenJDK 11 (required for Jenkins and Maven builds)
+sudo apt install openjdk-11-jdk -y
+
+# Verify Java installation
+java -version
+javac -version
+Task 1: Install Jenkins and Build Tools
+Subtask 1.1: Install Jenkins
+# Add Jenkins repository key
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee \
+  /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+
+# Add Jenkins repository
+echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
+  https://pkg.jenkins.io/debian-stable binary/ | sudo tee \
+  /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Update package list
+sudo apt update
+
+# Install Jenkins
+sudo apt install jenkins -y
+
+# Start and enable Jenkins service
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
+
+# Check Jenkins status
+sudo systemctl status jenkins --no-pager
+Subtask 1.2: Complete Jenkins Initial Setup
+# Get the initial admin password
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+Open a web browser and navigate to http://localhost:8080
+Enter the initial admin password from the command above
+Click Install suggested plugins and wait for installation to complete
+Create an admin user with the following details:
+Username: admin
+Password: admin123
+Full name: Jenkins Admin
+Email: admin@example.com
+Keep the default Jenkins URL and click Save and Finish
+Subtask 1.3: Install Git and Maven
+# Install Git and Maven
+sudo apt install git -y
+sudo apt install maven -y
+
+# Verify installations
+git --version
+mvn --version
+Deliverable: Output of sudo systemctl status jenkins --no-pager showing active (running), and output of mvn --version showing a Maven version 3.x string with Java 11 detected. You should also have successfully logged into the Jenkins dashboard at http://localhost:8080.
+
+Task 2: Build a Sample Java Application with Maven
+Subtask 2.1: Create Project Structure and Source Files
+# Create project directory and Maven layout
+mkdir -p ~/jenkins-demo-app/src/main/java/com/example/app
+mkdir -p ~/jenkins-demo-app/src/test/java/com/example/app
+cd ~/jenkins-demo-app
+
+# Create the main application class
+cat > src/main/java/com/example/app/App.java << 'EOF'
+package com.example.app;
+
+public class App {
+    public static void main(String[] args) {
+        System.out.println("Hello Jenkins CI/CD!");
+        System.out.println("Application version: 1.0.0");
+    }
+
+    public String getGreeting() {
+        return "Hello Jenkins CI/CD!";
+    }
+
+    public int add(int a, int b) {
+        return a + b;
+    }
+
+    public int multiply(int a, int b) {
+        return a * b;
+    }
+}
+EOF
+
+# Create the JUnit test class
+cat > src/test/java/com/example/app/AppTest.java << 'EOF'
+package com.example.app;
+
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class AppTest {
+
+    @Test
+    public void testGetGreeting() {
+        App app = new App();
+        assertEquals("Hello Jenkins CI/CD!", app.getGreeting());
+    }
+
+    @Test
+    public void testAdd() {
+        App app = new App();
+        assertEquals(5, app.add(2, 3));
+        assertEquals(0, app.add(-1, 1));
+    }
+
+    @Test
+    public void testMultiply() {
+        App app = new App();
+        assertEquals(6, app.multiply(2, 3));
+        assertEquals(0, app.multiply(0, 5));
+    }
+}
+EOF
+Subtask 2.2: Create the Maven Configuration with Code Coverage
+cat > pom.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.example</groupId>
+    <artifactId>jenkins-demo-app</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Jenkins Demo Application</name>
+    <description>A simple Java application for Jenkins CI/CD demonstration</description>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <junit.version>4.13.2</junit.version>
+        <jacoco.version>0.8.8</jacoco.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.8.1</version>
+                <configuration>
+                    <source>11</source>
+                    <target>11</target>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.0.0-M7</version>
+            </plugin>
+
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.2.0</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.example.app.App</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+EOF
+Subtask 2.3: Verify the Local Build
+# Compile, test, and package locally before wiring up Jenkins
+mvn clean compile
+mvn test
+mvn package
+java -jar target/jenkins-demo-app-1.0.0.jar
+Subtask 2.4: Initialize Git and Commit
+git init
+git config user.name "Jenkins User"
+git config user.email "jenkins@example.com"
+
+cat > .gitignore << 'EOF'
+target/
+*.class
+deployment/
+app.log
+.idea/
+*.iml
+.vscode/
+.DS_Store
+EOF
+
+git add .
+git commit -m "Initial commit: Java application with Maven and JUnit tests"
+git log --oneline
+Deliverable: Local console output showing BUILD SUCCESS from mvn package, program output Hello Jenkins CI/CD! / Application version: 1.0.0 from running the JAR, and a git log --oneline showing one commit.
+
+Task 3: Build the Jenkins Pipeline with a Jenkinsfile
+Subtask 3.1: Configure Jenkins Global Tools
+Open Jenkins at http://localhost:8080
+Navigate to Manage Jenkins > Global Tool Configuration
+Under Maven, click Add Maven:
+Name: Maven
+Check Install automatically, select the latest 3.x version
+Under JDK, click Add JDK:
+Name: JDK11
+Uncheck Install automatically
+JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
+Click Save
+Subtask 3.2: Create the Jenkinsfile
+This Jenkinsfile defines a complete pipeline: checkout, build, unit tests with coverage, quality check, packaging, integration test, and deploy, plus a fully working post block for notifications (built with the Jenkins logging and emailext mechanisms â no third-party account required).
+
+cd ~/jenkins-demo-app
+
+cat > Jenkinsfile << 'EOF'
+pipeline {
+    agent any
+
+    tools {
+        maven 'Maven'
+        jdk 'JDK11'
+    }
+
+    environment {
+        APP_NAME = 'jenkins-demo-app'
+        APP_VERSION = '1.0.0'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source code...'
+                checkout scm
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo 'Starting build process...'
+                sh 'mvn clean compile'
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                echo 'Running unit tests with code coverage...'
+                sh 'mvn test jacoco:report'
+            }
+            post {
+                always {
+                    junit 'target/surefire-reports/*.xml'
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'target/site/jacoco',
+                        reportFiles: 'index.html',
+                        reportName: 'Code Coverage Report'
+                    ])
+                }
+            }
+        }
+
+        stage('Code Quality Check') {
+            steps {
+                echo 'Performing basic code quality checks...'
+                sh '''
+                    echo "Checking for compilation warnings..."
+                    mvn compile 2>&1 | grep -i warning || echo "No compilation warnings found"
+
+                    echo "Counting lines of code..."
+                    find src -name "*.java" -exec wc -l {} + | tail -1
+
+                    echo "Checking for TODO comments..."
+                    grep -r "TODO" src/ || echo "No TODO comments found"
+                '''
+            }
+        }
+
+        stage('Package') {
+            steps {
+                echo 'Creating application package...'
+                sh 'mvn package -DskipTests'
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                }
+            }
+        }
+
+        stage('Integration Test') {
+            steps {
+                echo 'Running integration tests...'
+                sh '''
+                    timeout 5s java -jar target/${APP_NAME}-${APP_VERSION}.jar > app.log 2>&1 || true
+
+                    echo "Test 1: Application startup verification"
+                    grep -q "Hello Jenkins CI/CD!" app.log && echo "PASS: startup message found"
+
+                    echo "Test 2: Application version check"
+                    grep -q "Application version: 1.0.0" app.log && echo "PASS: version message found"
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying application (simulated local deployment)...'
+                sh '''
+                    mkdir -p deployment
+                    cp target/${APP_NAME}-${APP_VERSION}.jar deployment/${APP_NAME}-${APP_VERSION}-build-${BUILD_NUMBER}.jar
+                    echo "Deployed as ${APP_NAME}-${APP_VERSION}-build-${BUILD_NUMBER}.jar"
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Pipeline execution completed for build #${BUILD_NUMBER}"
+            sh 'rm -f app.log'
+            cleanWs()
+        }
+        success {
+            echo "SUCCESS: Build #${BUILD_NUMBER} completed all stages: Checkout -> Build -> Unit Tests -> Quality Check -> Package -> Integration Test -> Deploy"
+        }
+        failure {
+            echo "FAILURE: Build #${BUILD_NUMBER} failed. Check the stage logs above to identify the failing step."
+        }
+        unstable {
+            echo "UNSTABLE: Build #${BUILD_NUMBER} completed with test failures."
+        }
+    }
+}
+EOF
+
+git add Jenkinsfile .gitignore
+git commit -m "Add Jenkinsfile with full build, test, coverage, and notification pipeline"
+git log --oneline
+Subtask 3.3: Create and Run the Pipeline Job
+From the Jenkins dashboard, click New Item
+Enter item name jenkins-demo-pipeline, select Pipeline, click OK
+In the job configuration:
+Build Triggers: check Poll SCM, enter H/5 * * * *
+Pipeline section: Definition = Pipeline script from SCM, SCM = Git, Repository URL = /home/<your-user>/jenkins-demo-app (replace <your-user> with your actual home directory), Branch Specifier = */master, Script Path = Jenkinsfile
+Click Save, then click Build Now
+Open the build in the Stage View and confirm every stage (Checkout, Build, Unit Tests, Code Quality Check, Package, Integration Test, Deploy) shows green
+Deliverable: A successful pipeline run in Jenkins showing all seven stages green in the Stage View, an archived JAR artifact visible on the build page, and a published "Code Coverage Report" link on the build page.
+
+Task 4: Configure Real Build Notifications
+Jenkins supports two realistic, verifiable notification mechanisms without requiring any external paid service: (1) structured log-based notifications printed directly in the post block (already added in Task 3), and (2) real SMTP email notifications using the Email Extension plugin configured against a mail relay you control. This task configures both, using the post block already present in the Jenkinsfile above â you will not need to hand-edit the failure block again.
+
+Subtask 4.1: Verify Log-Based Notifications (Already Working)
+The post block created in Subtask 3.2 already prints clear, distinct messages for always, success, failure, and unstable outcomes. Confirm this works right now:
+
+Open the last build's Console Output in Jenkins
+Scroll to the bottom and confirm you see a line beginning with SUCCESS: Build #<n> completed all stages...
+This is a fully functional notification mechanism: any external log-monitoring tool (e.g., a script tailing Jenkins logs, or a monitoring agent) can watch for the SUCCESS, FAILURE, or UNSTABLE keywords and trigger alerts
+Subtask 4.2: Install and Configure the Email Extension Plugin
+Go to Manage Jenkins > Manage Plugins > Available, search for Email Extension Plugin, install it, and restart Jenkins if prompted
+Go to Manage Jenkins > Configure System, scroll to Extended E-mail Notification
+Configure the SMTP server. For this lab, use the local Postfix mail relay installed below rather than an external account:
+# Install a local sendmail-compatible relay so Jenkins has a real SMTP target
+sudo apt install postfix -y
+# During the interactive prompt, choose "Local only" as the configuration type
+sudo systemctl status postfix --no-pager
+Back in Configure System > Extended E-mail Notification:
+SMTP server: localhost
+SMTP Port: 25
+Default user e-mail suffix: @localhost
+Click Advanced, leave authentication and SSL unchecked since this is a local relay
+Under Default Recipients (in the same section), enter admin@localhost
+Click Apply and Save
+Subtask 4.3: Add the emailext Step to the Jenkinsfile
+Edit the Jenkinsfile using nano (or your preferred editor) and replace the entire existing post block with the version below, which adds a working emailext call alongside the existing log messages:
+
+cd ~/jenkins-demo-app
+nano Jenkinsfile
+Replace the whole post { ... } block at the end of the file with exactly this:
+
+    post {
+        always {
+            echo "Pipeline execution completed for build #${BUILD_NUMBER}"
+            sh 'rm -f app.log'
+            cleanWs()
+        }
+        success {
+            echo "SUCCESS: Build #${BUILD_NUMBER} completed all stages: Checkout -> Build -> Unit Tests -> Quality Check -> Package -> Integration Test -> Deploy"
+            emailext (
+                subject: "Jenkins Build SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "Good news! The pipeline ${env.JOB_NAME} build #${env.BUILD_NUMBER} completed successfully.\n\nView details: ${env.BUILD_URL}",
+                to: 'admin@localhost'
+            );
+        }
+        failure {
+            echo "FAILURE: Build #${BUILD_NUMBER} failed. Check the stage logs above to identify the failing stage."
+            emailext (
+                subject: "Jenkins Build FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "The pipeline ${env.JOB_NAME} build #${env.BUILD_NUMBER} failed.\n\nCheck console output at: ${env.BUILD_URL}console",
+                to: 'admin@localhost'
+            );
+        }
+        unstable {
+            echo "UNSTABLE: Build #${BUILD_NUMBER} completed with test failures."
+            emailext (
+                subject: "Jenkins Build UNSTABLE: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "The pipeline ${env.JOB_NAME} build #${env.BUILD_NUMBER} is unstable (tests failed).\n\nCheck test results at: ${env.BUILD_URL}testReport",
+                to: 'admin@localhost'
+            );
+        }
+    }
+Save and exit the editor (in nano: Ctrl+O, Enter, Ctrl+X).
+
+Subtask 4.4: Commit and Test Notifications
+git add Jenkinsfile
+git commit -m "Add emailext notifications to post block"
+git log --oneline -3
+Trigger Build Now in Jenkins
+Check the Console Output: you should see both the echo line and a line confirming the email was sent (e.g., Sending email to: admin@localhost)
+Verify local mail delivery:
+# View the local mailbox for the admin user (Postfix delivers here by default)
+sudo tail -n 30 /var/mail/admin 2>/dev/null || sudo tail -n 30 /var/spool/mail/admin
+Deliverable: Console output from a build showing the emailext send confirmation, and either a visible message in /var/mail/admin (or /var/spool/mail/admin) containing the subject line Jenkins Build SUCCESS: jenkins-demo-pipeline #<n>, or, at minimum, a Postfix mail log entry confirming the message was queued (sudo tail -n 20 /var/log/mail.log).
+
+Task 5: Trigger Failures and Monitor Trends
+Subtask 5.1: Create a Deliberate Test Failure
+cd ~/jenkins-demo-app
+
+cat > src/test/java/com/example/app/FailingTest.java << 'EOF'
+package com.example.app;
+
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class FailingTest {
+
+    @Test
+    public void testThatShouldFail() {
+        assertEquals("Expected", "Actual");
+    }
+}
+EOF
+
+git add src/test/java/com/example/app/FailingTest.java
+git commit -m "Add failing test for demonstration"
+Trigger Build Now. Confirm the pipeline fails at the Unit Tests stage, the Stage View shows red at that stage, and the Console Output ends with the FAILURE: message and its corresponding emailext send confirmation.
+
+Subtask 5.2: Fix the Failure and Confirm Recovery
+rm src/test/java/com/example/app/FailingTest.java
+git add -A
+git commit -m "Remove failing test - pipeline should pass now"
+Trigger Build Now again and confirm all stages return to green and the SUCCESS: notification fires.
+
+Subtask 5.3: Monitor Build Trends
+From the jenkins-demo-pipeline job page, click Build History in the left sidebar
+Observe the sequence of build results (blue/green for success, red for failure) across your last several builds, corresponding to the passing build, the deliberate failure, and the recovery build
+Click on any individual build number to open its Console Output and compare execution times reported at the bottom of the log (Finished: SUCCESS line includes elapsed time)
+Open Test Result Trend (visible on the job's main page once at least two builds have run) to view a graph of passed versus failed tests across builds
+Note which build number introduced the failure and which build number restored a passing state â this history is the basis for diagnosing regressions in a real CI/CD workflow
+Deliverable: A jenkins-demo-pipeline build history containing at least three builds: one passing, one failing (red, stopped at Unit Tests), and one passing again, with the Test Result Trend graph visibly showing the dip and recovery in passed test count.
+
+Expected Outcomes
+A working Jenkins installation running a multi-stage pipeline (checkout, build, test with coverage, quality check, package, integration test, deploy) driven entirely by a version-controlled Jenkinsfile
+Verified email notifications delivered through a local SMTP relay for success, failure, and unstable build outcomes, in addition to log-based notifications visible in console output
+A build history demonstrating a clear failure-and-recovery cycle, with test trend graphs and archived artifacts confirming pipeline correctness at each stage
+Troubleshooting
+If the pipeline fails at the Checkout stage with a "repository not found" error, what does this tell you about how Jenkins resolves the repository path configured in the job, and how would you confirm the exact path Jenkins is using versus the path on your filesystem?
+If emailext reports "Sending email" in the console but no message ever appears in /var/mail/admin, what steps would you take to determine whether the problem is in Jenkins' plugin configuration, in Postfix's delivery, or in mailbox permissions â and which log file would you check first?
+Conclusion
+In this lab, students installed Jenkins from scratch, built a complete Maven-based Java application with unit tests and code coverage, and expressed the entire build lifecycle as a version-controlled Jenkinsfile covering checkout, build, test, quality checks, packaging, integration testing, and deployment. Students then configured genuine, verifiable notification channels â structured console logging and real SMTP email delivery through a local Postfix relay â replacing any reliance on external or unverifiable services. By deliberately introducing and then fixing a failing test, students observed how Jenkins reports failures across the Stage View, console output, and build history, and learned to use the Test Result Trend graph to distinguish regressions from recoveries. These skills form the practical foundation of continuous integration: automated, observable, and reliably notified build pipelines that catch problems immediately after they are introduced.
