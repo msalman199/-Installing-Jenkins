@@ -1,0 +1,961 @@
+Managing Jenkins Credentials
+Lab Objectives
+By the end of this lab, students will be able to:
+
+Understand the importance of secure credential management in CI/CD pipelines
+Install and configure Jenkins on a Linux machine
+Use Jenkins Credentials Manager to store API keys, passwords, and secrets securely
+Access stored credentials within Jenkinsfile pipelines
+Implement best practices for credential security in Jenkins
+Create and manage different types of credentials (username/password, secret text, SSH keys)
+Demonstrate secure credential usage in automated build processes
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Linux command line operations
+Familiarity with Jenkins concepts and pipeline basics
+Knowledge of Git version control system
+Understanding of CI/CD pipeline fundamentals
+Basic knowledge of shell scripting
+Lab Environment
+Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated Linux machine. The provided machine is bare metal with no pre-installed tools, so you will install all required software during the lab exercises.
+
+Note: All tasks in this lab will be performed on a single Linux machine. No additional virtual machines or remote hosts are required.
+
+Task 1: Environment Setup and Jenkins Installation
+Subtask 1.1: Update System and Install Prerequisites
+First, update your Linux system and install the necessary prerequisites for Jenkins.
+
+# Update package repository
+sudo apt update && sudo apt upgrade -y
+
+# Install Java 11 (required for Jenkins)
+sudo apt install openjdk-11-jdk -y
+
+# Verify Java installation
+java -version
+
+# Install curl and wget for downloading packages
+sudo apt install curl wget gnupg2 software-properties-common -y
+Subtask 1.2: Install Jenkins
+Install Jenkins using the official repository to ensure you get the latest stable version.
+
+# Add Jenkins repository key
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee \
+    /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+
+# Add Jenkins repository
+echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
+    https://pkg.jenkins.io/debian-stable binary/ | sudo tee \
+    /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Update package repository
+sudo apt update
+
+# Install Jenkins
+sudo apt install jenkins -y
+
+# Start and enable Jenkins service
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
+
+# Check Jenkins service status
+sudo systemctl status jenkins
+Subtask 1.3: Configure Jenkins Initial Setup
+Access Jenkins through the web interface and complete the initial setup.
+
+# Get the initial admin password
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+
+# Display the password for easy copying
+echo "Jenkins Initial Admin Password:"
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+Open your web browser and navigate to http://localhost:8080. Use the displayed password to unlock Jenkins.
+
+Select Install suggested plugins when prompted
+Create an admin user with the following details:
+Username: admin
+Password: admin123
+Full name: Jenkins Administrator
+Email: admin@example.com
+Keep the default Jenkins URL: http://localhost:8080/
+Click Save and Finish and then Start using Jenkins
+Subtask 1.4: Install Git and Create Sample Repository
+Install Git and create a sample repository for testing Jenkins pipelines.
+
+# Install Git
+sudo apt install git -y
+
+# Configure Git (replace with your information)
+git config --global user.name "Jenkins Lab User"
+git config --global user.email "jenkins@example.com"
+
+# Create a project directory
+mkdir -p ~/jenkins-lab
+cd ~/jenkins-lab
+
+# Initialize a Git repository
+git init
+
+# Create a sample application file
+cat > app.py << 'EOF'
+#!/usr/bin/env python3
+import os
+import requests
+
+def main():
+    # This would typically use an API key from environment variables
+    api_key = os.getenv('API_KEY', 'default-key')
+    database_password = os.getenv('DB_PASSWORD', 'default-password')
+    
+    print(f"Application started with API key: {api_key[:4]}...")
+    print(f"Database password configured: {'Yes' if database_password != 'default-password' else 'No'}")
+    
+    # Simulate API call (would use real API key in production)
+    print("Simulating API call with secure credentials...")
+    print("Application running successfully!")
+
+if __name__ == "__main__":
+    main()
+EOF
+
+# Create a Jenkinsfile (we'll modify this later)
+cat > Jenkinsfile << 'EOF'
+pipeline {
+    agent any
+    
+    stages {
+        stage('Build') {
+            steps {
+                echo 'Building application...'
+                sh 'python3 app.py'
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                echo 'Running tests...'
+                sh 'echo "Tests completed successfully"'
+            }
+        }
+    }
+}
+EOF
+
+# Add files to Git
+git add .
+git commit -m "Initial commit with sample application"
+Task 2: Using Jenkins Credentials Manager to Store Secrets Securely
+Subtask 2.1: Access Jenkins Credentials Manager
+Navigate to Jenkins Credentials Manager to understand the interface and available options.
+
+In Jenkins dashboard, click Manage Jenkins
+Click Manage Credentials
+Click System under Stores scoped to Jenkins
+Click Global credentials (unrestricted)
+You should now see the credentials management interface where you can add, modify, and delete credentials.
+
+Subtask 2.2: Create Secret Text Credentials
+Create secret text credentials for API keys and other sensitive text values.
+
+Click Add Credentials in the Global credentials page
+Select Secret text from the Kind dropdown
+Configure the first credential:
+Scope: Global (Jenkins, nodes, items, all child items, etc)
+Secret: sk-1234567890abcdef1234567890abcdef
+ID: api-key-secret
+Description: API Key for external service integration
+Click OK to save
+Create a second secret text credential:
+
+Click Add Credentials again
+Select Secret text from the Kind dropdown
+Configure the second credential:
+Scope: Global
+Secret: MySecurePassword123!
+ID: database-password
+Description: Database connection password
+Click OK to save
+Subtask 2.3: Create Username and Password Credentials
+Create username/password credentials for services that require both.
+
+Click Add Credentials
+Select Username with password from the Kind dropdown
+Configure the credential:
+Scope: Global
+Username: serviceuser
+Password: ServicePass456!
+ID: service-account
+Description: Service account for external system access
+Click OK to save
+Subtask 2.4: Create SSH Key Credentials
+Generate and store SSH key credentials for secure repository access.
+
+First, generate an SSH key pair on your Linux machine:
+
+# Generate SSH key pair
+ssh-keygen -t rsa -b 4096 -f ~/jenkins-lab/jenkins-key -N ""
+
+# Display the private key content
+echo "Private Key Content:"
+cat ~/jenkins-lab/jenkins-key
+
+# Display the public key content
+echo "Public Key Content:"
+cat ~/jenkins-lab/jenkins-key.pub
+Now add the SSH key to Jenkins:
+
+Click Add Credentials in Jenkins
+Select SSH Username with private key from the Kind dropdown
+Configure the SSH credential:
+Scope: Global
+ID: git-ssh-key
+Description: SSH key for Git repository access
+Username: git
+Private Key: Select Enter directly and paste the private key content from the terminal
+Click OK to save
+Subtask 2.5: Verify Stored Credentials
+Verify that all credentials have been stored successfully:
+
+In the Global credentials page, you should see four credentials:
+
+api-key-secret (Secret text)
+database-password (Secret text)
+service-account (Username with password)
+git-ssh-key (SSH Username with private key)
+Click on each credential to view its details (note that secret values are masked for security)
+
+Task 3: Access Credentials in Jenkinsfile
+Subtask 3.1: Create a New Jenkins Pipeline Job
+Create a new pipeline job to test credential access:
+
+From Jenkins dashboard, click New Item
+Enter item name: credentials-demo-pipeline
+Select Pipeline and click OK
+In the pipeline configuration page, scroll down to the Pipeline section
+Select Pipeline script from the Definition dropdown
+Leave the script area empty for now (we'll add it in the next subtask)
+Click Save
+Subtask 3.2: Update Jenkinsfile with Credential Access
+Update your local Jenkinsfile to demonstrate secure credential access:
+
+cd ~/jenkins-lab
+
+# Create an enhanced Jenkinsfile with credential access
+cat > Jenkinsfile << 'EOF'
+pipeline {
+    agent any
+    
+    environment {
+        // Define environment variables that will hold credential values
+        API_KEY = credentials('api-key-secret')
+        DB_PASSWORD = credentials('database-password')
+    }
+    
+    stages {
+        stage('Environment Setup') {
+            steps {
+                echo 'Setting up environment with secure credentials...'
+                script {
+                    // Verify credentials are loaded (values will be masked in logs)
+                    echo "API Key loaded: ${env.API_KEY ? 'Yes' : 'No'}"
+                    echo "Database password loaded: ${env.DB_PASSWORD ? 'Yes' : 'No'}"
+                }
+            }
+        }
+        
+        stage('Build with Credentials') {
+            steps {
+                echo 'Building application with secure credentials...'
+                script {
+                    // Use credentials in build process
+                    sh '''
+                        echo "Starting build process..."
+                        export API_KEY="${API_KEY}"
+                        export DB_PASSWORD="${DB_PASSWORD}"
+                        python3 app.py
+                    '''
+                }
+            }
+        }
+        
+        stage('Test with Username/Password') {
+            steps {
+                echo 'Testing with username/password credentials...'
+                withCredentials([usernamePassword(credentialsId: 'service-account', 
+                                                usernameVariable: 'SERVICE_USER', 
+                                                passwordVariable: 'SERVICE_PASS')]) {
+                    script {
+                        sh '''
+                            echo "Service User: $SERVICE_USER"
+                            echo "Service Password: [MASKED]"
+                            echo "Simulating service authentication..."
+                            if [ "$SERVICE_USER" = "serviceuser" ]; then
+                                echo "Authentication successful!"
+                            else
+                                echo "Authentication failed!"
+                                exit 1
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('SSH Key Usage Demo') {
+            steps {
+                echo 'Demonstrating SSH key credential usage...'
+                withCredentials([sshUserPrivateKey(credentialsId: 'git-ssh-key', 
+                                                 keyFileVariable: 'SSH_KEY_FILE', 
+                                                 usernameVariable: 'SSH_USER')]) {
+                    script {
+                        sh '''
+                            echo "SSH User: $SSH_USER"
+                            echo "SSH Key File: $SSH_KEY_FILE"
+                            echo "SSH key file exists: $(test -f $SSH_KEY_FILE && echo 'Yes' || echo 'No')"
+                            echo "SSH key permissions: $(ls -la $SSH_KEY_FILE)"
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Multiple Credentials Demo') {
+            steps {
+                echo 'Using multiple credentials in a single stage...'
+                withCredentials([
+                    string(credentialsId: 'api-key-secret', variable: 'API_SECRET'),
+                    string(credentialsId: 'database-password', variable: 'DB_SECRET'),
+                    usernamePassword(credentialsId: 'service-account', 
+                                   usernameVariable: 'SVC_USER', 
+                                   passwordVariable: 'SVC_PASS')
+                ]) {
+                    script {
+                        sh '''
+                            echo "=== Multiple Credentials Test ==="
+                            echo "API Secret loaded: $(test -n "$API_SECRET" && echo 'Yes' || echo 'No')"
+                            echo "DB Secret loaded: $(test -n "$DB_SECRET" && echo 'Yes' || echo 'No')"
+                            echo "Service credentials loaded: $(test -n "$SVC_USER" && echo 'Yes' || echo 'No')"
+                            echo "All credentials successfully accessed!"
+                        '''
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo 'Pipeline completed - credentials were handled securely'
+        }
+        success {
+            echo 'All credential operations completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed - check credential configuration'
+        }
+    }
+}
+EOF
+
+# Commit the updated Jenkinsfile
+git add Jenkinsfile
+git commit -m "Updated Jenkinsfile with credential access examples"
+Subtask 3.3: Configure Pipeline to Use Local Repository
+Configure the Jenkins pipeline to use your local Git repository:
+
+Go back to your credentials-demo-pipeline job in Jenkins
+Click Configure
+In the Pipeline section, change Definition to Pipeline script from SCM
+Configure SCM settings:
+SCM: Git
+Repository URL: /home/$(whoami)/jenkins-lab (use the full path to your repository)
+Credentials: None (since it's a local repository)
+Branch Specifier: */master or */main
+Script Path: Jenkinsfile
+Click Save
+Subtask 3.4: Run the Pipeline and Verify Credential Access
+Execute the pipeline to test credential access:
+
+From the pipeline job page, click Build Now
+Click on the build number (e.g., #1) when it appears
+Click Console Output to view the build logs
+Observe the following in the console output:
+
+Credentials are loaded successfully
+Secret values are masked in the logs (showing **** instead of actual values)
+Different credential types are accessed correctly
+The pipeline completes successfully
+Subtask 3.5: Create Advanced Credential Usage Example
+Create a more advanced example showing conditional credential usage:
+
+cd ~/jenkins-lab
+
+# Create a deployment script that uses credentials
+cat > deploy.sh << 'EOF'
+#!/bin/bash
+
+echo "=== Deployment Script ==="
+echo "Timestamp: $(date)"
+
+# Check if required environment variables are set
+if [ -z "$API_KEY" ]; then
+    echo "ERROR: API_KEY not provided"
+    exit 1
+fi
+
+if [ -z "$DB_PASSWORD" ]; then
+    echo "ERROR: DB_PASSWORD not provided"
+    exit 1
+fi
+
+# Simulate deployment steps
+echo "Step 1: Validating API key..."
+if [ ${#API_KEY} -gt 10 ]; then
+    echo "API key validation: PASSED"
+else
+    echo "API key validation: FAILED"
+    exit 1
+fi
+
+echo "Step 2: Testing database connection..."
+if [ ${#DB_PASSWORD} -gt 8 ]; then
+    echo "Database connection: SUCCESSFUL"
+else
+    echo "Database connection: FAILED"
+    exit 1
+fi
+
+echo "Step 3: Deploying application..."
+sleep 2
+echo "Application deployed successfully!"
+
+echo "=== Deployment Complete ==="
+EOF
+
+# Make the script executable
+chmod +x deploy.sh
+
+# Create an advanced Jenkinsfile
+cat > Jenkinsfile.advanced << 'EOF'
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['development', 'staging', 'production'],
+            description: 'Target deployment environment'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: 'Skip test execution'
+        )
+    }
+    
+    environment {
+        // Load credentials based on environment
+        API_KEY = credentials('api-key-secret')
+        DB_PASSWORD = credentials('database-password')
+    }
+    
+    stages {
+        stage('Validate Parameters') {
+            steps {
+                script {
+                    echo "Deployment Environment: ${params.ENVIRONMENT}"
+                    echo "Skip Tests: ${params.SKIP_TESTS}"
+                    
+                    // Validate environment-specific requirements
+                    if (params.ENVIRONMENT == 'production') {
+                        echo "Production deployment requires additional validation..."
+                        // In real scenarios, you might use different credentials for production
+                    }
+                }
+            }
+        }
+        
+        stage('Pre-deployment Tests') {
+            when {
+                not { params.SKIP_TESTS }
+            }
+            steps {
+                echo 'Running pre-deployment tests...'
+                withCredentials([
+                    string(credentialsId: 'api-key-secret', variable: 'TEST_API_KEY'),
+                    usernamePassword(credentialsId: 'service-account', 
+                                   usernameVariable: 'TEST_USER', 
+                                   passwordVariable: 'TEST_PASS')
+                ]) {
+                    script {
+                        sh '''
+                            echo "Testing API connectivity..."
+                            if [ -n "$TEST_API_KEY" ] && [ -n "$TEST_USER" ]; then
+                                echo "API test: PASSED"
+                                echo "Authentication test: PASSED"
+                            else
+                                echo "Tests FAILED - missing credentials"
+                                exit 1
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy Application') {
+            steps {
+                echo "Deploying to ${params.ENVIRONMENT} environment..."
+                script {
+                    // Use credentials in deployment script
+                    sh '''
+                        export API_KEY="${API_KEY}"
+                        export DB_PASSWORD="${DB_PASSWORD}"
+                        ./deploy.sh
+                    '''
+                }
+            }
+        }
+        
+        stage('Post-deployment Verification') {
+            steps {
+                echo 'Verifying deployment...'
+                withCredentials([string(credentialsId: 'api-key-secret', variable: 'VERIFY_KEY')]) {
+                    script {
+                        sh '''
+                            echo "Performing post-deployment checks..."
+                            echo "API key verification: $(test -n "$VERIFY_KEY" && echo 'PASSED' || echo 'FAILED')"
+                            echo "Deployment verification completed!"
+                        '''
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "Deployment to ${params.ENVIRONMENT} completed successfully!"
+        }
+        failure {
+            echo "Deployment to ${params.ENVIRONMENT} failed!"
+        }
+        cleanup {
+            echo 'Cleaning up temporary files and credentials...'
+            // Credentials are automatically cleaned up by Jenkins
+        }
+    }
+}
+EOF
+
+# Commit the new files
+git add deploy.sh Jenkinsfile.advanced
+git commit -m "Added advanced credential usage examples"
+Subtask 3.6: Test Advanced Pipeline
+Create and test the advanced pipeline:
+
+Create a new pipeline job named advanced-credentials-demo
+Configure it to use Jenkinsfile.advanced as the script path
+Run the pipeline with different parameters to see how credentials are used in various scenarios
+Task 4: Best Practices and Security Considerations
+Subtask 4.1: Implement Credential Rotation Strategy
+Create a script to demonstrate credential rotation practices:
+
+cd ~/jenkins-lab
+
+# Create a credential rotation demonstration script
+cat > credential-rotation-demo.sh << 'EOF'
+#!/bin/bash
+
+echo "=== Credential Rotation Demonstration ==="
+
+# Simulate checking credential age
+CREDENTIAL_AGE_DAYS=45
+MAX_AGE_DAYS=30
+
+echo "Current credential age: $CREDENTIAL_AGE_DAYS days"
+echo "Maximum allowed age: $MAX_AGE_DAYS days"
+
+if [ $CREDENTIAL_AGE_DAYS -gt $MAX_AGE_DAYS ]; then
+    echo "WARNING: Credentials are older than $MAX_AGE_DAYS days"
+    echo "Credential rotation required!"
+    echo "Steps to rotate credentials:"
+    echo "1. Generate new credentials in external system"
+    echo "2. Update Jenkins credential store"
+    echo "3. Test pipeline with new credentials"
+    echo "4. Deactivate old credentials"
+else
+    echo "Credentials are within acceptable age range"
+fi
+
+echo "=== Rotation Check Complete ==="
+EOF
+
+chmod +x credential-rotation-demo.sh
+
+# Create a security audit Jenkinsfile
+cat > Jenkinsfile.security << 'EOF'
+pipeline {
+    agent any
+    
+    stages {
+        stage('Security Audit') {
+            steps {
+                echo 'Performing security audit of credential usage...'
+                script {
+                    sh '''
+                        echo "=== Jenkins Security Audit ==="
+                        echo "Checking credential access patterns..."
+                        
+                        # Simulate security checks
+                        echo "✓ Credentials are not hardcoded in source code"
+                        echo "✓ Credentials are accessed through Jenkins credential store"
+                        echo "✓ Credential values are masked in build logs"
+                        echo "✓ Credentials have appropriate scope restrictions"
+                        
+                        echo "=== Audit Complete ==="
+                    '''
+                }
+            }
+        }
+        
+        stage('Credential Validation') {
+            steps {
+                echo 'Validating credential configuration...'
+                withCredentials([
+                    string(credentialsId: 'api-key-secret', variable: 'API_KEY'),
+                    string(credentialsId: 'database-password', variable: 'DB_PASS')
+                ]) {
+                    script {
+                        sh '''
+                            # Validate credential format and strength
+                            echo "Validating API key format..."
+                            if [[ $API_KEY =~ ^sk-[a-f0-9]{32}$ ]]; then
+                                echo "API key format: VALID"
+                            else
+                                echo "API key format: INVALID (but acceptable for demo)"
+                            fi
+                            
+                            echo "Validating password strength..."
+                            if [ ${#DB_PASS} -ge 12 ]; then
+                                echo "Password length: ADEQUATE"
+                            else
+                                echo "Password length: WEAK (consider strengthening)"
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Access Control Check') {
+            steps {
+                echo 'Checking credential access controls...'
+                script {
+                    sh '''
+                        echo "=== Access Control Verification ==="
+                        echo "✓ Credentials are scoped to appropriate Jenkins items"
+                        echo "✓ Only authorized users can modify credentials"
+                        echo "✓ Credential access is logged and auditable"
+                        echo "✓ Temporary credential files are cleaned up automatically"
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                sh './credential-rotation-demo.sh'
+            }
+        }
+    }
+}
+EOF
+
+# Commit security-related files
+git add credential-rotation-demo.sh Jenkinsfile.security
+git commit -m "Added security audit and credential rotation examples"
+Subtask 4.2: Create Credential Management Documentation
+Create documentation for credential management best practices:
+
+cd ~/jenkins-lab
+
+# Create comprehensive documentation
+cat > CREDENTIAL_MANAGEMENT.md << 'EOF'
+# Jenkins Credential Management Best Practices
+
+## Overview
+This document outlines best practices for managing credentials securely in Jenkins pipelines.
+
+## Credential Types and Usage
+
+### 1. Secret Text
+- **Use for**: API keys, tokens, simple passwords
+- **Access method**: `credentials('credential-id')` or `withCredentials`
+- **Example**: API keys, OAuth tokens
+
+### 2. Username with Password
+- **Use for**: Service accounts, database connections
+- **Access method**: `withCredentials([usernamePassword(...)])`
+- **Example**: Database connections, service authentication
+
+### 3. SSH Username with Private Key
+- **Use for**: Git repository access, server connections
+- **Access method**: `withCredentials([sshUserPrivateKey(...)])`
+- **Example**: Git clone operations, server deployments
+
+## Security Best Practices
+
+### 1. Credential Scope
+- Use **Global** scope only when necessary
+- Prefer **System** or **Item** scope for restricted access
+- Regularly review and audit credential scopes
+
+### 2. Credential Rotation
+- Implement regular credential rotation (30-90 days)
+- Automate rotation where possible
+- Test new credentials before deactivating old ones
+
+### 3. Access Control
+- Limit credential modification to authorized users
+- Use Jenkins role-based security
+- Monitor credential access through audit logs
+
+### 4. Pipeline Security
+- Never log credential values
+- Use `withCredentials` for temporary access
+- Clean up temporary credential files
+
+## Common Pitfalls to Avoid
+
+1. **Hardcoding secrets** in Jenkinsfile or source code
+2. **Logging credential values** in build output
+3. **Using overly broad credential scopes**
+4. **Forgetting to rotate credentials regularly**
+5. **Sharing credentials between environments**
+
+## Monitoring and Auditing
+
+- Regularly review credential usage in build logs
+- Monitor for failed authentication attempts
+- Audit credential access patterns
+- Implement alerting for credential-related failures
+
+## Emergency Procedures
+
+### Credential Compromise
+1. Immediately disable compromised credentials
+2. Generate new credentials in external systems
+3. Update Jenkins credential store
+4. Test all affected pipelines
+5. Review access logs for unauthorized usage
+
+### Recovery Steps
+1. Identify affected systems and pipelines
+2. Update credentials in Jenkins
+3. Re-run failed builds
+4. Verify system security
+5. Document incident and lessons learned
+EOF
+
+# Create a troubleshooting guide
+cat > TROUBLESHOOTING.md << 'EOF'
+# Jenkins Credentials Troubleshooting Guide
+
+## Common Issues and Solutions
+
+### 1. Credential Not Found Error
+**Error**: `Credentials 'credential-id' not found`
+
+**Solutions**:
+- Verify credential ID spelling in Jenkinsfile
+- Check credential scope (Global vs System vs Item)
+- Ensure credential exists in Jenkins credential store
+- Verify user has permission to access credential
+
+### 2. Credential Access Denied
+**Error**: `Access denied to credential 'credential-id'`
+
+**Solutions**:
+- Check Jenkins user permissions
+- Verify credential scope allows access
+- Review Jenkins security configuration
+- Contact Jenkins administrator for access
+
+### 3. Empty Credential Values
+**Error**: Credential variable is empty in pipeline
+
+**Solutions**:
+- Verify credential is properly configured
+- Check credential type matches usage method
+- Ensure credential has actual value stored
+- Test credential access in simple pipeline
+
+### 4. SSH Key Authentication Failures
+**Error**: SSH authentication fails with stored key
+
+**Solutions**:
+- Verify SSH key format (private key, not public)
+- Check key permissions and ownership
+- Ensure key is not password-protected
+- Verify SSH key is added to target system
+
+### 5. Credential Masking Issues
+**Error**: Credential values appear in logs
+
+**Solutions**:
+- Use `withCredentials` instead of environment variables
+- Avoid echoing credential variables directly
+- Check Jenkins masking configuration
+- Review pipeline script for credential exposure
+
+## Debugging Steps
+
+### 1. Verify Credential Existence
+```groovy
+pipeline {
+    agent any
+    stages {
+        stage('Debug') {
+            steps {
+                script {
+                    try {
+                        withCredentials([string(credentialsId: 'your-credential-id', variable: 'TEST_VAR')]) {
+                            echo "Credential found and accessible"
+                        }
+                    } catch (Exception e) {
+                        echo "Credential error: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+    }
+}
+2. Test Credential Access
+withCredentials([string(credentialsId: 'test-credential', variable: 'TEST_CRED')]) {
+    script {
+        if (env.TEST_CRED) {
+            echo "Credential loaded successfully"
+        } else {
+            echo "Credential is empty or not loaded"
+        }
+    }
+}
+3. Check Credential Permissions
+Navigate to Jenkins > Manage Jenkins > Configure Global Security
+Review Matrix-based security settings
+Verify user has "Credentials > View" permission
+Check item-level permissions if using folder-scoped credentials
+Performance Considerations
+1. Credential Caching
+Jenkins caches credentials for performance
+Restart Jenkins if credential changes don't take effect
+Clear Jenkins cache if experiencing issues
+2. Multiple Credential Access
+Use single withCredentials block for multiple credentials
+Avoid nested credential access blocks
+Consider credential access frequency in pipeline design
+Best Practices for Troubleshooting
+Start Simple: Test credential access in minimal pipeline
+Check Logs: Review Jenkins system logs for credential errors
+Verify Permissions: Ensure proper user and credential permissions
+Test Incrementally: Add credential usage step by step
+Document Issues: Keep record of problems and solutions EOF
+Commit documentation
+git add CREDENTIAL_MANAGEMENT.md TROUBLESHOOTING.md git commit -m "Added comprehensive credential management documentation"
+
+
+### Subtask 4.3: Test Security Pipeline
+
+Create and run the security audit pipeline:
+
+1. Create a new pipeline job named `security-audit-pipeline`
+2. Configure it to use `Jenkinsfile.security`
+3. Run the pipeline to see security checks in action
+4. Review the output to understand security validation steps
+
+## Verification and Testing
+
+### Verification Checklist
+
+Complete the following verification steps to ensure successful lab completion:
+
+1. **Jenkins Installation Verification**
+   - [ ] Jenkins is running on port 8080
+   - [ ] Admin user can log in successfully
+   - [ ] Jenkins dashboard is accessible
+
+2. **Credential Store Verification**
+   - [ ] Four different credentials are stored in Jenkins
+   - [ ] Secret text credentials are properly masked
+   - [ ] Username/password credentials are accessible
+   - [ ] SSH key credentials are properly formatted
+
+3. **Pipeline Functionality Verification**
+   - [ ] Basic pipeline runs successfully with credentials
+   - [ ] Advanced pipeline handles parameters correctly
+   - [ ] Security audit pipeline completes without errors
+   - [ ] All credential types are accessed properly in pipelines
+
+4. **Security Verification**
+   - [ ] Credential values are masked in build logs
+   - [ ] No hardcoded secrets in source code
+   - [ ] Proper credential scoping is implemented
+   - [ ] Documentation covers security best practices
+
+### Final Testing Commands
+
+Run these commands to verify your lab setup:
+
+```bash
+# Verify Jenkins service
+sudo systemctl status jenkins
+
+# Check Jenkins logs for errors
+sudo tail -f /var/log/jenkins/jenkins.log &
+sleep 5
+kill %1
+
+# Verify Git repository
+cd ~/jenkins-lab
+git log --oneline
+
+# List all files created
+find ~/jenkins-lab -type f -name "*.md" -o -name "*.sh" -o -name "Jenkinsfile*" | sort
+
+# Test application script
+python3 ~/jenkins-lab/app.py
+Conclusion
+In this comprehensive lab, you have successfully learned how to manage Jenkins credentials securely and effectively. Here's what you accomplished:
+
+Key Achievements
+Installed and Configured Jenkins: Set up a complete Jenkins environment on a Linux machine with proper security configurations.
+
+Mastered Credential Management: Learned to use Jenkins Credentials Manager to store various types of sensitive information including:
+
+Secret text for API keys and tokens
+Username/password combinations for service accounts
+SSH private keys for secure repository access
+Implemented Secure Pipeline Practices: Created multiple Jenkinsfile examples demonstrating:
+
+Environment variable credential access
+Temporary credential access with withCredentials
+Multiple credential usage in single stages
+Conditional credential access based on parameters
+Applied Security Best Practices: Implemented comprehensive security measures including:
+
+Credential masking in build logs
+Proper credential scoping
+Access control verification
+Security audit procedures
+Created Documentation and Troubleshooting Guides: Developed comprehensive documentation covering:
+
+Best practices for credential management
+Common troubleshooting scenarios
+Security audit procedures
+Emergency response procedures
+Why This Matters
+Secure credential management is crucial in modern DevOps
