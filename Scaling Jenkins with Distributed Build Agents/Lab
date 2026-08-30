@@ -1,0 +1,852 @@
+Scaling Jenkins with Distributed Build Agents
+Lab Objectives
+By the end of this lab, you will be able to:
+
+Understand the concept of distributed builds in Jenkins
+Configure Jenkins master-agent architecture on a single machine
+Set up multiple Jenkins agent nodes using different connection methods
+Distribute build workloads across multiple agents for parallel execution
+Monitor and manage distributed builds through the Jenkins interface
+Troubleshoot common issues with Jenkins agent connectivity
+Optimize build performance through proper agent configuration
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Jenkins fundamentals
+Familiarity with Linux command line operations
+Knowledge of basic networking concepts
+Understanding of SSH key authentication
+Experience with Jenkins job configuration
+Basic knowledge of Java applications
+Lab Environment Setup
+Note: Al Nafi provides Linux-based cloud machines for this lab. Simply click "Start Lab" to access your dedicated Linux environment. The provided machine is bare metal with no pre-installed tools, so you will install all required software during the lab exercises.
+
+Task 1: Configure Jenkins Agent Nodes for Parallel Execution
+Subtask 1.1: Install and Configure Jenkins Master
+First, we need to set up Jenkins as our master node.
+
+Step 1: Update System and Install Java
+# Update package repository
+sudo apt update && sudo apt upgrade -y
+
+# Install OpenJDK 11 (required for Jenkins)
+sudo apt install openjdk-11-jdk -y
+
+# Verify Java installation
+java -version
+Step 2: Install Jenkins
+# Add Jenkins repository key
+wget -q -O - https://pkg.jenkins.io/debian-stable/jenkins.io.key | sudo apt-key add -
+
+# Add Jenkins repository
+sudo sh -c 'echo deb https://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
+
+# Update package list
+sudo apt update
+
+# Install Jenkins
+sudo apt install jenkins -y
+
+# Start and enable Jenkins service
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
+
+# Check Jenkins status
+sudo systemctl status jenkins
+Step 3: Initial Jenkins Setup
+# Get initial admin password
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+
+# Note: Save this password for web interface setup
+Access Jenkins web interface:
+
+Open browser and navigate to http://localhost:8080
+Enter the initial admin password
+Install suggested plugins
+Create admin user account
+Complete the setup wizard
+Subtask 1.2: Create Jenkins Agent Directories and Users
+Step 1: Create Agent Working Directories
+# Create directories for different agents
+sudo mkdir -p /opt/jenkins-agents/agent1
+sudo mkdir -p /opt/jenkins-agents/agent2
+sudo mkdir -p /opt/jenkins-agents/agent3
+
+# Create jenkins user for agents (if not exists)
+sudo useradd -m -s /bin/bash jenkins-agent1
+sudo useradd -m -s /bin/bash jenkins-agent2
+
+# Set permissions
+sudo chown -R jenkins-agent1:jenkins-agent1 /opt/jenkins-agents/agent1
+sudo chown -R jenkins-agent2:jenkins-agent2 /opt/jenkins-agents/agent2
+sudo chown -R jenkins:jenkins /opt/jenkins-agents/agent3
+Step 2: Generate SSH Keys for Agent Authentication
+# Generate SSH key for jenkins user
+sudo -u jenkins ssh-keygen -t rsa -b 4096 -f /var/lib/jenkins/.ssh/id_rsa -N ""
+
+# Generate SSH keys for agent users
+sudo -u jenkins-agent1 ssh-keygen -t rsa -b 4096 -f /home/jenkins-agent1/.ssh/id_rsa -N ""
+sudo -u jenkins-agent2 ssh-keygen -t rsa -b 4096 -f /home/jenkins-agent2/.ssh/id_rsa -N ""
+
+# Set up authorized_keys for SSH access
+sudo -u jenkins-agent1 cp /home/jenkins-agent1/.ssh/id_rsa.pub /home/jenkins-agent1/.ssh/authorized_keys
+sudo -u jenkins-agent2 cp /home/jenkins-agent2/.ssh/id_rsa.pub /home/jenkins-agent2/.ssh/authorized_keys
+
+# Copy jenkins master key to agent authorized_keys
+sudo -u jenkins-agent1 cat /var/lib/jenkins/.ssh/id_rsa.pub >> /home/jenkins-agent1/.ssh/authorized_keys
+sudo -u jenkins-agent2 cat /var/lib/jenkins/.ssh/id_rsa.pub >> /home/jenkins-agent2/.ssh/authorized_keys
+
+# Set proper permissions
+sudo chmod 700 /home/jenkins-agent1/.ssh
+sudo chmod 600 /home/jenkins-agent1/.ssh/*
+sudo chmod 700 /home/jenkins-agent2/.ssh
+sudo chmod 600 /home/jenkins-agent2/.ssh/*
+Subtask 1.3: Configure SSH Agent Node
+Step 1: Create SSH-based Agent in Jenkins Web Interface
+Navigate to Manage Jenkins > Manage Nodes and Clouds
+Click New Node
+Enter node name: ssh-agent-1
+Select Permanent Agent
+Click Create
+Step 2: Configure SSH Agent Settings
+Configure the following settings:
+
+Name: ssh-agent-1
+Description: SSH-based Jenkins agent
+Number of executors: 2
+Remote root directory: /opt/jenkins-agents/agent1
+Labels: ssh-agent linux
+Usage: Use this node as much as possible
+Launch method: Launch agents via SSH
+Host: localhost
+Credentials: Click Add > Jenkins
+Step 3: Add SSH Credentials
+Create new SSH credentials:
+
+# Display private key for copying
+sudo cat /var/lib/jenkins/.ssh/id_rsa
+In Jenkins credentials dialog:
+
+Kind: SSH Username with private key
+ID: jenkins-ssh-key
+Username: jenkins-agent1
+Private Key: Select Enter directly and paste the private key
+Passphrase: Leave empty
+Click Add
+Complete agent configuration:
+
+Credentials: Select jenkins-agent1 (jenkins-ssh-key)
+Host Key Verification Strategy: Non verifying Verification Strategy
+Availability: Keep this agent online as much as possible
+Click Save
+
+Subtask 1.4: Configure JNLP Agent Node
+Step 1: Download Jenkins Agent JAR
+# Create directory for JNLP agent
+sudo mkdir -p /opt/jenkins-agents/jnlp-agent
+sudo chown jenkins:jenkins /opt/jenkins-agents/jnlp-agent
+
+# Download agent.jar
+sudo -u jenkins wget http://localhost:8080/jnlpJars/agent.jar -O /opt/jenkins-agents/jnlp-agent/agent.jar
+Step 2: Create JNLP Agent in Jenkins
+Go to Manage Jenkins > Manage Nodes and Clouds
+Click New Node
+Enter node name: jnlp-agent-1
+Select Permanent Agent
+Click Create
+Configure settings:
+
+Name: jnlp-agent-1
+Description: JNLP-based Jenkins agent
+Number of executors: 2
+Remote root directory: /opt/jenkins-agents/jnlp-agent
+Labels: jnlp-agent linux
+Usage: Use this node as much as possible
+Launch method: Launch agent by connecting it to the master
+Click Save
+
+Step 3: Launch JNLP Agent
+# Get the secret key from Jenkins web interface
+# Navigate to the jnlp-agent-1 node page and copy the secret
+
+# Create startup script
+sudo tee /opt/jenkins-agents/jnlp-agent/start-agent.sh > /dev/null << 'EOF'
+#!/bin/bash
+cd /opt/jenkins-agents/jnlp-agent
+java -jar agent.jar -jnlpUrl http://localhost:8080/computer/jnlp-agent-1/slave-agent.jnlp -secret YOUR_SECRET_HERE -workDir /opt/jenkins-agents/jnlp-agent
+EOF
+
+# Make script executable
+sudo chmod +x /opt/jenkins-agents/jnlp-agent/start-agent.sh
+sudo chown jenkins:jenkins /opt/jenkins-agents/jnlp-agent/start-agent.sh
+Note: Replace YOUR_SECRET_HERE with the actual secret from the Jenkins web interface.
+
+Step 4: Start JNLP Agent
+# Start the JNLP agent
+sudo -u jenkins /opt/jenkins-agents/jnlp-agent/start-agent.sh &
+Subtask 1.5: Configure Docker-based Agent
+Step 1: Install Docker
+# Install Docker
+sudo apt install docker.io -y
+
+# Start and enable Docker
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Add jenkins user to docker group
+sudo usermod -aG docker jenkins
+
+# Restart Jenkins to apply group changes
+sudo systemctl restart jenkins
+Step 2: Install Docker Plugin in Jenkins
+Go to Manage Jenkins > Manage Plugins
+Click Available tab
+Search for "Docker"
+Install Docker plugin
+Restart Jenkins when prompted
+Step 3: Configure Docker Cloud
+Navigate to Manage Jenkins > Manage Nodes and Clouds
+Click Configure Clouds
+Click Add a new cloud > Docker
+Configure Docker cloud:
+Name: docker-cloud
+Docker Host URI: unix:///var/run/docker.sock
+Enabled: Check this option
+Step 4: Add Docker Agent Template
+Click Add Docker Template and configure:
+
+Labels: docker-agent
+Enabled: Check this option
+Docker Image: jenkins/inbound-agent:latest
+Instance Capacity: 2
+Remote File System Root: /home/jenkins
+Connect method: Connect with JNLP
+Click Save
+
+Subtask 1.6: Verify Agent Connectivity
+Step 1: Check Agent Status
+# Check all agents status via CLI
+curl -s "http://admin:admin@localhost:8080/computer/api/json" | python3 -m json.tool
+Step 2: Test Agent Connectivity
+Create a test script to verify agents:
+
+# Create test script
+cat > /tmp/test-agents.sh << 'EOF'
+#!/bin/bash
+echo "Testing Jenkins Agents Connectivity"
+echo "=================================="
+
+# Test SSH agent
+echo "Testing SSH Agent..."
+ssh -o StrictHostKeyChecking=no jenkins-agent1@localhost "echo 'SSH Agent is reachable'"
+
+# Check JNLP agent process
+echo "Testing JNLP Agent..."
+pgrep -f "agent.jar" && echo "JNLP Agent process is running" || echo "JNLP Agent not running"
+
+# Test Docker
+echo "Testing Docker..."
+docker ps && echo "Docker is accessible" || echo "Docker not accessible"
+
+echo "Agent connectivity test completed"
+EOF
+
+chmod +x /tmp/test-agents.sh
+/tmp/test-agents.sh
+Task 2: Monitor Distributed Builds in Jenkins
+Subtask 2.1: Create Test Jobs for Different Agents
+Step 1: Create SSH Agent Test Job
+Go to Jenkins dashboard
+Click New Item
+Enter name: ssh-agent-test
+Select Freestyle project
+Click OK
+Configure the job:
+
+Restrict where this project can be run: Check this option
+Label Expression: ssh-agent
+Build Steps: Add Execute shell
+echo "Running on SSH Agent: $(hostname)"
+echo "Current user: $(whoami)"
+echo "Working directory: $(pwd)"
+echo "Available disk space:"
+df -h
+echo "System information:"
+uname -a
+sleep 10
+echo "SSH Agent build completed successfully"
+Click Save
+
+Step 2: Create JNLP Agent Test Job
+Click New Item
+Enter name: jnlp-agent-test
+Select Freestyle project
+Click OK
+Configure the job:
+
+Restrict where this project can be run: Check this option
+Label Expression: jnlp-agent
+Build Steps: Add Execute shell
+echo "Running on JNLP Agent: $(hostname)"
+echo "Current user: $(whoami)"
+echo "Working directory: $(pwd)"
+echo "Java version:"
+java -version
+echo "Available memory:"
+free -h
+sleep 10
+echo "JNLP Agent build completed successfully"
+Click Save
+
+Step 3: Create Docker Agent Test Job
+Click New Item
+Enter name: docker-agent-test
+Select Freestyle project
+Click OK
+Configure the job:
+
+Restrict where this project can be run: Check this option
+Label Expression: docker-agent
+Build Steps: Add Execute shell
+echo "Running on Docker Agent: $(hostname)"
+echo "Current user: $(whoami)"
+echo "Working directory: $(pwd)"
+echo "Container information:"
+cat /proc/version
+echo "Environment variables:"
+env | grep JENKINS
+sleep 10
+echo "Docker Agent build completed successfully"
+Click Save
+
+Subtask 2.2: Create Parallel Build Pipeline
+Step 1: Install Pipeline Plugin
+Go to Manage Jenkins > Manage Plugins
+Install Pipeline plugin if not already installed
+Restart Jenkins if required
+Step 2: Create Multi-Agent Pipeline Job
+Click New Item
+Enter name: parallel-build-pipeline
+Select Pipeline
+Click OK
+Step 3: Configure Pipeline Script
+Add the following pipeline script:
+
+pipeline {
+    agent none
+    
+    stages {
+        stage('Parallel Builds') {
+            parallel {
+                stage('SSH Agent Build') {
+                    agent {
+                        label 'ssh-agent'
+                    }
+                    steps {
+                        echo 'Building on SSH Agent'
+                        sh '''
+                            echo "SSH Agent Details:"
+                            echo "Hostname: $(hostname)"
+                            echo "User: $(whoami)"
+                            echo "Date: $(date)"
+                            echo "Simulating build process..."
+                            sleep 15
+                            echo "SSH Agent build completed"
+                        '''
+                    }
+                }
+                
+                stage('JNLP Agent Build') {
+                    agent {
+                        label 'jnlp-agent'
+                    }
+                    steps {
+                        echo 'Building on JNLP Agent'
+                        sh '''
+                            echo "JNLP Agent Details:"
+                            echo "Hostname: $(hostname)"
+                            echo "User: $(whoami)"
+                            echo "Date: $(date)"
+                            echo "Simulating build process..."
+                            sleep 15
+                            echo "JNLP Agent build completed"
+                        '''
+                    }
+                }
+                
+                stage('Docker Agent Build') {
+                    agent {
+                        label 'docker-agent'
+                    }
+                    steps {
+                        echo 'Building on Docker Agent'
+                        sh '''
+                            echo "Docker Agent Details:"
+                            echo "Hostname: $(hostname)"
+                            echo "User: $(whoami)"
+                            echo "Date: $(date)"
+                            echo "Container info: $(cat /proc/version)"
+                            echo "Simulating build process..."
+                            sleep 15
+                            echo "Docker Agent build completed"
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Collect Results') {
+            agent {
+                label 'master'
+            }
+            steps {
+                echo 'All parallel builds completed successfully'
+                echo 'Collecting and processing results...'
+                sh '''
+                    echo "Build Summary:"
+                    echo "=============="
+                    echo "All agents executed builds in parallel"
+                    echo "Total execution time reduced through parallelization"
+                    echo "Build completed at: $(date)"
+                '''
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo 'Pipeline execution completed'
+        }
+        success {
+            echo 'All builds succeeded!'
+        }
+        failure {
+            echo 'One or more builds failed'
+        }
+    }
+}
+Click Save
+
+Subtask 2.3: Monitor Build Execution and Performance
+Step 1: Create Build Monitoring Script
+# Create monitoring script
+cat > /tmp/monitor-builds.sh << 'EOF'
+#!/bin/bash
+
+echo "Jenkins Build Monitoring Dashboard"
+echo "================================="
+
+# Function to get build queue
+get_build_queue() {
+    echo "Current Build Queue:"
+    curl -s "http://admin:admin@localhost:8080/queue/api/json" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if data['items']:
+    for item in data['items']:
+        print(f\"  - {item['task']['name']} (waiting)\")
+else:
+    print('  No jobs in queue')
+"
+}
+
+# Function to get running builds
+get_running_builds() {
+    echo "Currently Running Builds:"
+    curl -s "http://admin:admin@localhost:8080/computer/api/json" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+running_found = False
+for computer in data['computer']:
+    if computer['executors']:
+        for executor in computer['executors']:
+            if executor['currentExecutable']:
+                print(f\"  - {executor['currentExecutable']['fullDisplayName']} on {computer['displayName']}\")
+                running_found = True
+if not running_found:
+    print('  No builds currently running')
+"
+}
+
+# Function to get agent status
+get_agent_status() {
+    echo "Agent Status:"
+    curl -s "http://admin:admin@localhost:8080/computer/api/json" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for computer in data['computer']:
+    status = 'Online' if not computer['offline'] else 'Offline'
+    executors = len([e for e in computer['executors'] if e['currentExecutable']])
+    total_executors = computer['numExecutors']
+    print(f\"  - {computer['displayName']}: {status} ({executors}/{total_executors} busy)\")
+"
+}
+
+# Main monitoring loop
+while true; do
+    clear
+    echo "Jenkins Build Monitoring Dashboard - $(date)"
+    echo "============================================="
+    echo
+    
+    get_agent_status
+    echo
+    get_build_queue
+    echo
+    get_running_builds
+    echo
+    echo "Press Ctrl+C to exit"
+    sleep 5
+done
+EOF
+
+chmod +x /tmp/monitor-builds.sh
+Step 2: Execute Test Builds
+# Trigger multiple builds to test parallel execution
+echo "Triggering test builds..."
+
+# Trigger individual agent tests
+curl -X POST "http://admin:admin@localhost:8080/job/ssh-agent-test/build"
+curl -X POST "http://admin:admin@localhost:8080/job/jnlp-agent-test/build"
+curl -X POST "http://admin:admin@localhost:8080/job/docker-agent-test/build"
+
+# Trigger parallel pipeline
+curl -X POST "http://admin:admin@localhost:8080/job/parallel-build-pipeline/build"
+
+echo "Builds triggered. Monitor progress in Jenkins web interface or run monitoring script."
+Step 3: Analyze Build Performance
+Create a performance analysis script:
+
+cat > /tmp/analyze-performance.sh << 'EOF'
+#!/bin/bash
+
+echo "Jenkins Build Performance Analysis"
+echo "================================="
+
+# Get build history for analysis
+analyze_job_performance() {
+    local job_name=$1
+    echo "Analyzing performance for job: $job_name"
+    
+    curl -s "http://admin:admin@localhost:8080/job/$job_name/api/json?tree=builds[number,duration,result,builtOn]" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+builds = data.get('builds', [])[:10]  # Last 10 builds
+
+if builds:
+    print(f'Recent builds for $job_name:')
+    total_duration = 0
+    successful_builds = 0
+    
+    for build in builds:
+        duration_sec = build['duration'] / 1000 if build['duration'] else 0
+        duration_min = duration_sec / 60
+        result = build['result'] or 'RUNNING'
+        node = build.get('builtOn', 'unknown')
+        
+        print(f'  Build #{build[\"number\"]}: {result} - {duration_min:.1f}min on {node}')
+        
+        if build['result'] == 'SUCCESS':
+            total_duration += duration_sec
+            successful_builds += 1
+    
+    if successful_builds > 0:
+        avg_duration = (total_duration / successful_builds) / 60
+        print(f'  Average successful build time: {avg_duration:.1f} minutes')
+    print()
+else:
+    print(f'No build history found for $job_name')
+    print()
+"
+}
+
+# Analyze each job
+analyze_job_performance "ssh-agent-test"
+analyze_job_performance "jnlp-agent-test" 
+analyze_job_performance "docker-agent-test"
+analyze_job_performance "parallel-build-pipeline"
+
+# Overall system performance
+echo "System Resource Usage:"
+echo "====================="
+echo "CPU Usage:"
+top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1
+
+echo "Memory Usage:"
+free -h
+
+echo "Disk Usage:"
+df -h /
+
+echo "Jenkins Process Info:"
+ps aux | grep jenkins | grep -v grep
+EOF
+
+chmod +x /tmp/analyze-performance.sh
+Subtask 2.4: Configure Build Load Balancing
+Step 1: Create Load Balancing Test
+# Create a script to test load balancing
+cat > /tmp/test-load-balancing.sh << 'EOF'
+#!/bin/bash
+
+echo "Testing Jenkins Load Balancing"
+echo "============================="
+
+# Create multiple identical jobs to test distribution
+for i in {1..5}; do
+    echo "Triggering build batch $i..."
+    
+    # Trigger builds that can run on any agent
+    curl -X POST "http://admin:admin@localhost:8080/job/ssh-agent-test/build" &
+    curl -X POST "http://admin:admin@localhost:8080/job/jnlp-agent-test/build" &
+    curl -X POST "http://admin:admin@localhost:8080/job/docker-agent-test/build" &
+    
+    sleep 2
+done
+
+wait
+echo "All builds triggered. Check Jenkins dashboard for distribution across agents."
+EOF
+
+chmod +x /tmp/test-load-balancing.sh
+Step 2: Monitor Load Distribution
+# Run the monitoring script to observe load balancing
+/tmp/monitor-builds.sh
+Subtask 2.5: Troubleshooting Common Issues
+Step 1: Create Diagnostic Script
+cat > /tmp/diagnose-agents.sh << 'EOF'
+#!/bin/bash
+
+echo "Jenkins Agent Diagnostics"
+echo "========================"
+
+# Check Jenkins service
+echo "1. Jenkins Service Status:"
+sudo systemctl status jenkins --no-pager -l
+
+echo -e "\n2. Jenkins Logs (last 20 lines):"
+sudo tail -20 /var/log/jenkins/jenkins.log
+
+# Check agent processes
+echo -e "\n3. Agent Processes:"
+echo "JNLP Agent processes:"
+pgrep -f "agent.jar" && ps aux | grep "agent.jar" | grep -v grep || echo "No JNLP agents running"
+
+echo -e "\nDocker containers:"
+docker ps -a | grep jenkins || echo "No Jenkins Docker containers"
+
+# Check SSH connectivity
+echo -e "\n4. SSH Connectivity:"
+for user in jenkins-agent1 jenkins-agent2; do
+    echo "Testing SSH to $user:"
+    sudo -u jenkins ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no $user@localhost "echo 'SSH OK'" 2>/dev/null || echo "SSH failed for $user"
+done
+
+# Check disk space
+echo -e "\n5. Disk Space:"
+df -h /opt/jenkins-agents/
+df -h /var/lib/jenkins/
+
+# Check network connectivity
+echo -e "\n6. Network Connectivity:"
+netstat -tlnp | grep :8080 || echo "Jenkins port 8080 not listening"
+
+# Check Java processes
+echo -e "\n7. Java Processes:"
+ps aux | grep java | grep -v grep
+
+echo -e "\nDiagnostics completed."
+EOF
+
+chmod +x /tmp/diagnose-agents.sh
+Step 2: Common Issue Resolution
+Create a troubleshooting guide script:
+
+cat > /tmp/fix-common-issues.sh << 'EOF'
+#!/bin/bash
+
+echo "Jenkins Agent Issue Resolution"
+echo "============================="
+
+fix_ssh_issues() {
+    echo "Fixing SSH connectivity issues..."
+    
+    # Restart SSH service
+    sudo systemctl restart ssh
+    
+    # Fix SSH permissions
+    for user in jenkins-agent1 jenkins-agent2; do
+        if id "$user" &>/dev/null; then
+            sudo chmod 700 /home/$user/.ssh
+            sudo chmod 600 /home/$user/.ssh/*
+            sudo chown -R $user:$user /home/$user/.ssh
+        fi
+    done
+    
+    # Test SSH connectivity
+    echo "Testing SSH connections..."
+    for user in jenkins-agent1 jenkins-agent2; do
+        sudo -u jenkins ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no $user@localhost "echo 'SSH test successful for $user'" || echo "SSH still failing for $user"
+    done
+}
+
+fix_jnlp_issues() {
+    echo "Fixing JNLP agent issues..."
+    
+    # Kill existing JNLP processes
+    pkill -f "agent.jar"
+    
+    # Restart JNLP agent
+    if [ -f /opt/jenkins-agents/jnlp-agent/start-agent.sh ]; then
+        echo "Restarting JNLP agent..."
+        sudo -u jenkins /opt/jenkins-agents/jnlp-agent/start-agent.sh &
+        sleep 5
+        pgrep -f "agent.jar" && echo "JNLP agent restarted successfully" || echo "JNLP agent failed to start"
+    fi
+}
+
+fix_docker_issues() {
+    echo "Fixing Docker agent issues..."
+    
+    # Restart Docker service
+    sudo systemctl restart docker
+    
+    # Clean up old containers
+    docker container prune -f
+    
+    # Pull latest agent image
+    docker pull jenkins/inbound-agent:latest
+    
+    echo "Docker issues resolved"
+}
+
+fix_permissions() {
+    echo "Fixing file permissions..."
+    
+    # Fix Jenkins directories
+    sudo chown -R jenkins:jenkins /var/lib/jenkins
+    sudo chown -R jenkins:jenkins /opt/jenkins-agents/agent3
+    
+    # Fix agent directories
+    sudo chown -R jenkins-agent1:jenkins-agent1 /opt/jenkins-agents/agent1
+    sudo chown -R jenkins-agent2:jenkins-agent2 /opt/jenkins-agents/agent2
+    
+    echo "Permissions fixed"
+}
+
+# Main menu
+echo "Select issue to fix:"
+echo "1. SSH connectivity issues"
+echo "2. JNLP agent issues"
+echo "3. Docker agent issues"
+echo "4. File permission issues"
+echo "5. Fix all issues"
+echo "6. Exit"
+
+read -p "Enter choice (1-6): " choice
+
+case $choice in
+    1) fix_ssh_issues ;;
+    2) fix_jnlp_issues ;;
+    3) fix_docker_issues ;;
+    4) fix_permissions ;;
+    5) 
+        fix_ssh_issues
+        fix_jnlp_issues
+        fix_docker_issues
+        fix_permissions
+        echo "All fixes applied"
+        ;;
+    6) echo "Exiting..." ;;
+    *) echo "Invalid choice" ;;
+esac
+EOF
+
+chmod +x /tmp/fix-common-issues.sh
+Verification and Testing
+Final System Test
+Run a comprehensive test to verify the distributed build system:
+
+cat > /tmp/final-test.sh << 'EOF'
+#!/bin/bash
+
+echo "Final Jenkins Distributed Build System Test"
+echo "=========================================="
+
+# Test 1: Verify all agents are online
+echo "Test 1: Agent Status Check"
+curl -s "http://admin:admin@localhost:8080/computer/api/json" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+all_online = True
+for computer in data['computer']:
+    status = 'Online' if not computer['offline'] else 'Offline'
+    print(f'{computer[\"displayName\"]}: {status}')
+    if computer['offline']:
+        all_online = False
+print(f'All agents online: {all_online}')
+"
+
+echo -e "\nTest 2: Trigger Parallel Builds"
+# Trigger the parallel pipeline
+curl -X POST "http://admin:admin@localhost:8080/job/parallel-build-pipeline/build"
+
+echo "Parallel build triggered. Monitor in Jenkins web interface."
+
+echo -e "\nTest 3: System Resource Check"
+echo "CPU Usage: $(top -bn1 | grep 'Cpu(s)' | awk '{print $2}')"
+echo "Memory Usage:"
+free -h | grep Mem
+
+echo -e "\nTest 4: Build Capacity"
+curl -s "http://admin:admin@localhost:8080/computer/api/json" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+total_executors = sum(computer['numExecutors'] for computer in data['computer'])
+busy_executors = sum(len([e for e in computer['executors'] if e['currentExecutable']]) for computer in data['computer'])
+print(f'Total build capacity: {total_executors} executors')
+print(f'Currently busy: {busy_executors} executors')
+print(f'Available capacity: {total_executors - busy_executors} executors')
+"
+
+echo -e "\nFinal test completed. Check Jenkins dashboard for detailed results."
+EOF
+
+chmod +x /tmp/final-test.sh
+/tmp/final-test.sh
+Troubleshooting Tips
+Common Issues and Solutions
+Issue 1: SSH Agent Connection Failed
+
+Cause: SSH key authentication problems
+Solution: Run /tmp/fix-common-issues.sh and select option 1
+Issue 2: JNLP Agent Not Connecting
+
+Cause: Incorrect secret key or network issues
+Solution: Verify secret key in Jenkins web interface and restart agent
+Issue 3: Docker Agent Not Starting
+
+Cause: Docker service issues or permission problems
+Solution: Restart Docker service and check user permissions
+Issue 4: Builds Not Distributing Evenly
+
+Cause: Label restrictions or agent capacity limits
+Solution: Check job label expressions and agent executor counts
+Issue 5: High Resource Usage
+
+Cause: Too many concurrent builds
+Solution: Reduce executor counts or add resource limits
+Conclusion
+In this lab, you have successfully implemented a distributed Jenkins build system with multiple agent types running on a single machine. You have learned to:
+
+Configure Multiple Agent Types: Set up SSH-based, JNLP-based, and Docker-based Jenkins agents, each with different connection methods and use cases.
+
+Implement Parallel Build Execution: Created jobs that can run simultaneously across different agents, significantly reducing overall build times through parallelization.
+
+Monitor Distributed Builds: Developed monitoring scripts and dashboards to track build distribution, agent status, and system performance in real-time.
+
+Optimize Build Performance: Learned how to balance workloads across agents and identify performance bottlenecks in distributed build environments.
+
+Troubleshoot Agent Issues: Created diagnostic and resolution scripts to handle common connectivity and configuration problems.
+
+This distributed build architecture is essential for scaling Jenkins in production environments where build volumes are high
