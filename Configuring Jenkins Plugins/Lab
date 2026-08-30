@@ -1,0 +1,739 @@
+Configuring Jenkins Plugins
+Lab Objectives
+By the end of this lab, students will be able to:
+
+Install and configure Jenkins plugins to extend functionality
+Set up the Docker plugin and integrate it into Jenkins pipelines
+Configure the Maven plugin for Java project builds
+Create and execute Jenkins pipelines using Docker and Maven plugins
+Understand plugin management best practices in Jenkins
+Troubleshoot common plugin configuration issues
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Jenkins fundamentals
+Familiarity with Linux command line operations
+Basic knowledge of Docker concepts
+Understanding of Java and Maven build processes
+Experience with Jenkins pipeline syntax (Groovy)
+Completion of previous Jenkins labs or equivalent knowledge
+Lab Environment
+Al Nafi Cloud Machine Setup: Click "Start Lab" to access your Linux-based cloud machine. The provided machine is bare metal with no pre-installed tools, so you will install all required software during this lab exercise.
+
+System Requirements:
+
+Ubuntu 20.04 LTS or later
+Minimum 4GB RAM
+20GB available disk space
+Internet connectivity for downloading packages
+Task 1: Environment Setup and Jenkins Installation
+Subtask 1.1: Update System and Install Prerequisites
+First, update your system and install necessary dependencies:
+
+# Update package lists
+sudo apt update && sudo apt upgrade -y
+
+# Install required packages
+sudo apt install -y wget curl gnupg2 software-properties-common apt-transport-https ca-certificates
+Subtask 1.2: Install Java (OpenJDK 11)
+Jenkins requires Java to run. Install OpenJDK 11:
+
+# Install OpenJDK 11
+sudo apt install -y openjdk-11-jdk
+
+# Verify Java installation
+java -version
+javac -version
+
+# Set JAVA_HOME environment variable
+echo 'export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64' >> ~/.bashrc
+source ~/.bashrc
+echo $JAVA_HOME
+Subtask 1.3: Install Jenkins
+Install Jenkins using the official repository:
+
+# Add Jenkins repository key
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+
+# Add Jenkins repository
+echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/ | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Update package lists and install Jenkins
+sudo apt update
+sudo apt install -y jenkins
+
+# Start and enable Jenkins service
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
+
+# Check Jenkins status
+sudo systemctl status jenkins
+Subtask 1.4: Initial Jenkins Setup
+Access Jenkins and complete the initial setup:
+
+# Get the initial admin password
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+Open a web browser and navigate to http://localhost:8080
+Enter the initial admin password from the command above
+Select Install suggested plugins
+Create an admin user with the following details:
+Username: admin
+Password: admin123
+Full name: Jenkins Administrator
+Email: admin@localhost
+Keep the default Jenkins URL: http://localhost:8080/
+Click Start using Jenkins
+Task 2: Install and Configure Docker Plugin
+Subtask 2.1: Install Docker Engine
+Install Docker on your Linux machine:
+
+# Remove any old Docker installations
+sudo apt remove -y docker docker-engine docker.io containerd runc
+
+# Add Docker's official GPG key
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+# Add Docker repository
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Update package lists and install Docker
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Add jenkins user to docker group
+sudo usermod -aG docker jenkins
+sudo usermod -aG docker $USER
+
+# Start and enable Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Restart Jenkins to apply group changes
+sudo systemctl restart jenkins
+
+# Verify Docker installation
+sudo docker --version
+sudo docker run hello-world
+Subtask 2.2: Install Docker Plugin in Jenkins
+Navigate to Jenkins dashboard at http://localhost:8080
+Click Manage Jenkins → Manage Plugins
+Click the Available tab
+Search for Docker in the filter box
+Select the following plugins:
+Docker Pipeline
+Docker
+Docker Commons Plugin
+Click Install without restart
+Check Restart Jenkins when installation is complete and no jobs are running
+Wait for Jenkins to restart and log back in.
+
+Subtask 2.3: Configure Docker in Jenkins
+Configure Docker settings in Jenkins:
+
+Go to Manage Jenkins → Configure System
+Scroll down to Docker section
+Click Add Docker → Docker
+Configure the following:
+Name: local-docker
+Docker Host URI: unix:///var/run/docker.sock
+Check Enabled
+Click Test Connection to verify
+Click Save
+Subtask 2.4: Create a Docker-based Pipeline
+Create a new pipeline job to test Docker integration:
+
+Click New Item from Jenkins dashboard
+Enter name: docker-pipeline-test
+Select Pipeline and click OK
+In the Pipeline section, select Pipeline script
+Enter the following pipeline code:
+pipeline {
+    agent any
+    
+    stages {
+        stage('Docker Info') {
+            steps {
+                script {
+                    sh 'docker --version'
+                    sh 'docker info'
+                }
+            }
+        }
+        
+        stage('Pull and Run Container') {
+            steps {
+                script {
+                    sh 'docker pull alpine:latest'
+                    sh 'docker run --rm alpine:latest echo "Hello from Docker container!"'
+                }
+            }
+        }
+        
+        stage('Build Custom Image') {
+            steps {
+                script {
+                    writeFile file: 'Dockerfile', text: '''
+FROM alpine:latest
+RUN echo "Custom Docker image built by Jenkins" > /tmp/jenkins-built.txt
+CMD cat /tmp/jenkins-built.txt
+'''
+                    sh 'docker build -t jenkins-test-image .'
+                    sh 'docker run --rm jenkins-test-image'
+                }
+            }
+        }
+        
+        stage('Cleanup') {
+            steps {
+                script {
+                    sh 'docker rmi jenkins-test-image || true'
+                    sh 'docker system prune -f'
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
+Click Save
+Click Build Now to execute the pipeline
+Monitor the build progress in Console Output
+Task 3: Install and Configure Maven Plugin
+Subtask 3.1: Install Maven on the System
+Install Apache Maven:
+
+# Download Maven 3.9.4
+cd /opt
+sudo wget https://archive.apache.org/dist/maven/maven-3/3.9.4/binaries/apache-maven-3.9.4-bin.tar.gz
+
+# Extract Maven
+sudo tar xzf apache-maven-3.9.4-bin.tar.gz
+sudo ln -s apache-maven-3.9.4 maven
+
+# Set Maven environment variables
+echo 'export M2_HOME=/opt/maven' | sudo tee -a /etc/environment
+echo 'export MAVEN_HOME=/opt/maven' | sudo tee -a /etc/environment
+echo 'export PATH=${M2_HOME}/bin:${PATH}' | sudo tee -a /etc/environment
+
+# Apply environment changes
+source /etc/environment
+
+# Create symbolic link for system-wide access
+sudo ln -s /opt/maven/bin/mvn /usr/local/bin/mvn
+
+# Verify Maven installation
+mvn -version
+Subtask 3.2: Install Maven Plugin in Jenkins
+Go to Manage Jenkins → Manage Plugins
+Click the Available tab
+Search for Maven Integration
+Select the following plugins:
+Maven Integration plugin
+Pipeline Maven Integration Plugin
+Click Install without restart
+Check Restart Jenkins when installation is complete and no jobs are running
+Subtask 3.3: Configure Maven in Jenkins Global Tools
+After Jenkins restarts, go to Manage Jenkins → Global Tool Configuration
+Scroll to Maven section
+Click Add Maven
+Configure the following:
+Name: Maven-3.9.4
+Uncheck Install automatically
+MAVEN_HOME: /opt/maven
+Scroll to JDK section (if not already configured)
+Click Add JDK
+Configure the following:
+Name: OpenJDK-11
+Uncheck Install automatically
+JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
+Click Save
+Subtask 3.4: Create a Sample Java Project
+Create a sample Maven project for testing:
+
+# Create project directory
+mkdir -p /tmp/sample-java-project
+cd /tmp/sample-java-project
+
+# Create Maven project structure
+mkdir -p src/main/java/com/example
+mkdir -p src/test/java/com/example
+
+# Create pom.xml
+cat > pom.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <groupId>com.example</groupId>
+    <artifactId>sample-java-app</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+    
+    <name>Sample Java Application</name>
+    <description>A simple Java application for Jenkins testing</description>
+    
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <junit.version>4.13.2</junit.version>
+    </properties>
+    
+    <dependencies>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>11</source>
+                    <target>11</target>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.1.2</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+EOF
+
+# Create main Java class
+cat > src/main/java/com/example/HelloWorld.java << 'EOF'
+package com.example;
+
+public class HelloWorld {
+    public static void main(String[] args) {
+        System.out.println("Hello, World from Jenkins Maven build!");
+    }
+    
+    public String getMessage() {
+        return "Hello, World!";
+    }
+    
+    public int add(int a, int b) {
+        return a + b;
+    }
+}
+EOF
+
+# Create test class
+cat > src/test/java/com/example/HelloWorldTest.java << 'EOF'
+package com.example;
+
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class HelloWorldTest {
+    
+    @Test
+    public void testGetMessage() {
+        HelloWorld hw = new HelloWorld();
+        assertEquals("Hello, World!", hw.getMessage());
+    }
+    
+    @Test
+    public void testAdd() {
+        HelloWorld hw = new HelloWorld();
+        assertEquals(5, hw.add(2, 3));
+        assertEquals(0, hw.add(-1, 1));
+    }
+}
+EOF
+
+# Test Maven build locally
+mvn clean compile test package
+
+# Copy project to Jenkins workspace
+sudo cp -r /tmp/sample-java-project /var/lib/jenkins/workspace/
+sudo chown -R jenkins:jenkins /var/lib/jenkins/workspace/sample-java-project
+Subtask 3.5: Create Maven Pipeline Job
+Create a Jenkins pipeline for the Maven project:
+
+Go to Jenkins dashboard
+Click New Item
+Enter name: maven-java-pipeline
+Select Pipeline and click OK
+In the Pipeline section, select Pipeline script
+Enter the following pipeline code:
+pipeline {
+    agent any
+    
+    tools {
+        maven 'Maven-3.9.4'
+        jdk 'OpenJDK-11'
+    }
+    
+    environment {
+        MAVEN_OPTS = '-Xmx1024m'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                    // Copy the sample project to workspace
+                    sh 'cp -r /var/lib/jenkins/workspace/sample-java-project/* .'
+                }
+            }
+        }
+        
+        stage('Environment Info') {
+            steps {
+                sh 'java -version'
+                sh 'mvn -version'
+                sh 'echo "JAVA_HOME: $JAVA_HOME"'
+                sh 'echo "MAVEN_HOME: $MAVEN_HOME"'
+            }
+        }
+        
+        stage('Clean') {
+            steps {
+                sh 'mvn clean'
+            }
+        }
+        
+        stage('Compile') {
+            steps {
+                sh 'mvn compile'
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                sh 'mvn test'
+            }
+            post {
+                always {
+                    publishTestResults testResultsPattern: 'target/surefire-reports/*.xml'
+                }
+            }
+        }
+        
+        stage('Package') {
+            steps {
+                sh 'mvn package -DskipTests'
+            }
+        }
+        
+        stage('Archive Artifacts') {
+            steps {
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+            }
+        }
+        
+        stage('Run Application') {
+            steps {
+                sh 'java -cp target/sample-java-app-1.0.0.jar com.example.HelloWorld'
+            }
+        }
+    }
+    
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo 'Maven build completed successfully!'
+        }
+        failure {
+            echo 'Maven build failed!'
+        }
+    }
+}
+Click Save
+Click Build Now to execute the pipeline
+Monitor the build progress and check each stage
+Task 4: Advanced Integration - Docker with Maven
+Subtask 4.1: Create Dockerized Maven Build Pipeline
+Create an advanced pipeline that combines Docker and Maven:
+
+Create a new pipeline job: dockerized-maven-build
+Use the following pipeline script:
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_IMAGE = 'maven-app'
+        DOCKER_TAG = "${BUILD_NUMBER}"
+    }
+    
+    stages {
+        stage('Prepare Workspace') {
+            steps {
+                script {
+                    // Copy sample project
+                    sh 'cp -r /var/lib/jenkins/workspace/sample-java-project/* .'
+                    
+                    // Create Dockerfile for the application
+                    writeFile file: 'Dockerfile', text: '''
+FROM openjdk:11-jre-slim
+
+WORKDIR /app
+
+COPY target/sample-java-app-1.0.0.jar app.jar
+
+EXPOSE 8080
+
+CMD ["java", "-jar", "app.jar"]
+'''
+                    
+                    // Create multi-stage Dockerfile for build
+                    writeFile file: 'Dockerfile.build', text: '''
+FROM maven:3.9.4-openjdk-11 AS build
+
+WORKDIR /app
+
+COPY pom.xml .
+RUN mvn dependency:go-offline -B
+
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+FROM openjdk:11-jre-slim
+
+WORKDIR /app
+
+COPY --from=build /app/target/sample-java-app-1.0.0.jar app.jar
+
+CMD ["java", "-jar", "app.jar"]
+'''
+                }
+            }
+        }
+        
+        stage('Build with Maven in Docker') {
+            steps {
+                script {
+                    // Build using Maven Docker container
+                    sh '''
+                        docker run --rm \
+                        -v "$(pwd)":/usr/src/app \
+                        -w /usr/src/app \
+                        maven:3.9.4-openjdk-11 \
+                        mvn clean package -DskipTests
+                    '''
+                }
+            }
+        }
+        
+        stage('Test with Maven in Docker') {
+            steps {
+                script {
+                    sh '''
+                        docker run --rm \
+                        -v "$(pwd)":/usr/src/app \
+                        -w /usr/src/app \
+                        maven:3.9.4-openjdk-11 \
+                        mvn test
+                    '''
+                }
+            }
+            post {
+                always {
+                    publishTestResults testResultsPattern: 'target/surefire-reports/*.xml'
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                    sh "docker build -t ${DOCKER_IMAGE}:latest ."
+                }
+            }
+        }
+        
+        stage('Test Docker Image') {
+            steps {
+                script {
+                    sh "docker run --rm ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                }
+            }
+        }
+        
+        stage('Multi-stage Docker Build') {
+            steps {
+                script {
+                    sh "docker build -f Dockerfile.build -t ${DOCKER_IMAGE}-multistage:${DOCKER_TAG} ."
+                    sh "docker run --rm ${DOCKER_IMAGE}-multistage:${DOCKER_TAG}"
+                }
+            }
+        }
+        
+        stage('Image Information') {
+            steps {
+                script {
+                    sh "docker images | grep ${DOCKER_IMAGE}"
+                    sh "docker inspect ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                // Cleanup Docker images
+                sh "docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} || true"
+                sh "docker rmi ${DOCKER_IMAGE}:latest || true"
+                sh "docker rmi ${DOCKER_IMAGE}-multistage:${DOCKER_TAG} || true"
+                sh "docker system prune -f"
+            }
+            cleanWs()
+        }
+    }
+}
+Save and run the pipeline
+Subtask 4.2: Plugin Management Best Practices
+Configure plugin update settings and security:
+
+Go to Manage Jenkins → Manage Plugins
+Click Advanced tab
+Configure the following:
+Update Site URL: https://updates.jenkins.io/update-center.json
+Check Check now to update plugin information
+Go to Available tab and install additional useful plugins:
+Blue Ocean (for better pipeline visualization)
+Pipeline Stage View Plugin
+Build Timeout
+Timestamper
+# Check installed plugins via CLI
+java -jar /var/cache/jenkins/war/WEB-INF/jenkins-cli.jar -s http://localhost:8080/ -auth admin:admin123 list-plugins
+Task 5: Verification and Testing
+Subtask 5.1: Verify Plugin Installations
+Check that all plugins are properly installed and configured:
+
+Go to Manage Jenkins → Manage Plugins → Installed tab
+Verify the following plugins are installed and enabled:
+Docker Pipeline
+Docker Commons Plugin
+Maven Integration plugin
+Pipeline Maven Integration Plugin
+Subtask 5.2: Test All Pipelines
+Run all created pipelines to ensure they work correctly:
+
+# Check Jenkins service status
+sudo systemctl status jenkins
+
+# Check Docker service status
+sudo systemctl status docker
+
+# Verify Maven installation
+mvn -version
+
+# Check Jenkins logs for any errors
+sudo tail -f /var/log/jenkins/jenkins.log
+Subtask 5.3: Performance Verification
+Monitor system resources during builds:
+
+# Monitor system resources
+htop
+
+# Check disk usage
+df -h
+
+# Monitor Docker containers
+docker ps -a
+docker images
+
+# Check Jenkins workspace
+ls -la /var/lib/jenkins/workspace/
+Troubleshooting Common Issues
+Docker Permission Issues
+If you encounter Docker permission errors:
+
+# Add current user to docker group
+sudo usermod -aG docker $USER
+sudo usermod -aG docker jenkins
+
+# Restart Jenkins service
+sudo systemctl restart jenkins
+
+# Test Docker access
+sudo -u jenkins docker ps
+Maven Build Failures
+For Maven-related issues:
+
+# Check Maven configuration
+mvn help:system
+
+# Clear Maven cache
+rm -rf ~/.m2/repository
+
+# Check Java version compatibility
+java -version
+javac -version
+Jenkins Plugin Issues
+If plugins fail to install:
+
+# Restart Jenkins
+sudo systemctl restart jenkins
+
+# Check Jenkins logs
+sudo journalctl -u jenkins -f
+
+# Manual plugin installation
+sudo wget -O /var/lib/jenkins/plugins/docker-workflow.hpi https://updates.jenkins.io/latest/docker-workflow.hpi
+sudo chown jenkins:jenkins /var/lib/jenkins/plugins/docker-workflow.hpi
+sudo systemctl restart jenkins
+Memory Issues
+If builds fail due to memory constraints:
+
+# Increase Jenkins memory
+sudo systemctl edit jenkins
+
+# Add the following content:
+[Service]
+Environment="JAVA_OPTS=-Xmx2048m -XX:MaxPermSize=512m"
+
+# Restart Jenkins
+sudo systemctl restart jenkins
+Lab Conclusion
+In this comprehensive lab, you have successfully:
+
+Installed and configured Jenkins with essential plugins for Docker and Maven integration
+Set up Docker plugin and created Docker-based pipelines that can build, test, and deploy containerized applications
+Configured Maven plugin for Java project builds with automated testing and artifact management
+Created advanced pipelines that combine Docker and Maven for modern CI/CD workflows
+Implemented best practices for plugin management and system configuration
+Key Achievements
+Docker Integration: You can now use Docker containers in Jenkins pipelines for consistent build environments
+Maven Automation: Java projects can be automatically built, tested, and packaged using Maven
+Pipeline Expertise: You have created multiple types of pipelines demonstrating different integration patterns
+System Administration: You understand how to install, configure, and troubleshoot Jenkins plugins
+Real-World Applications
+The skills learned in this lab are directly applicable to:
+
+Enterprise CI/CD pipelines where Docker and Maven are standard tools
+Microservices development requiring containerized build and deployment processes
+Java application development with automated testing and quality assurance
+DevOps practices implementing infrastructure as code and automated deployments
+Next Steps
+To further enhance your Jenkins expertise, consider:
+
+Exploring additional plugins like SonarQube for code quality analysis
+Implementing security scanning in your pipelines
+Setting up distributed Jenkins builds with agent nodes
+Integrating with version control systems like Git
+Implementing advanced deployment strategies with Kubernetes
+This lab has provided you with a solid foundation in Jenkins plugin management and integration, preparing you for advanced DevOps and CI/CD implementations in professional environments.
