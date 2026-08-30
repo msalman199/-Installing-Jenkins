@@ -1,0 +1,604 @@
+Advanced Jenkins Pipelines (Scripted)
+Lab Objectives
+By the end of this lab, students will be able to:
+
+Understand the differences between declarative and scripted Jenkins pipelines
+Write and implement scripted Jenkins pipelines using Groovy syntax
+Implement advanced logic including conditional statements, loops, and error handling
+Use reusable functions and dynamic stage generation in scripted pipelines
+Integrate simulated external tool output (quality, security, test reports) into a pipeline workflow
+Debug and troubleshoot scripted pipeline issues using the Jenkins console log
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Jenkins and CI/CD concepts
+Familiarity with declarative Jenkins pipelines
+Basic knowledge of Groovy scripting language
+Understanding of Git version control
+Linux command line experience
+Basic programming concepts (variables, functions, conditionals)
+This lab is performed entirely in an isolated, self-owned practice environment (a local or lab-provided Linux virtual machine) for educational purposes. No production systems or external services are touched; all "external tool integration" in this lab is simulated with shell output so the pipeline logic can be studied safely.
+
+Required software (installed in Task 1):
+
+sudo apt update
+sudo apt install -y openjdk-11-jdk
+Jenkins itself is installed via the official Jenkins package repository in Task 1, Subtask 1.2.
+
+Task 1: Environment Setup and Jenkins Installation
+Subtask 1.1: Update System and Install Java
+Jenkins requires a Java runtime. Update the system and install OpenJDK 11.
+
+# Update package lists
+sudo apt update
+
+# Install OpenJDK 11
+sudo apt install -y openjdk-11-jdk
+
+# Verify Java installation
+java -version
+Expected output: a Java version string beginning with openjdk version "11....
+
+Subtask 1.2: Install Jenkins
+# Add the Jenkins repository signing key
+sudo wget -q -O /usr/share/keyrings/jenkins-keyring.asc \
+  https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+
+# Add the Jenkins apt repository
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
+  https://pkg.jenkins.io/debian-stable binary/" | \
+  sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Update package lists and install Jenkins
+sudo apt update
+sudo apt install -y jenkins
+
+# Start Jenkins and enable it on boot
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
+
+# Check Jenkins service status
+sudo systemctl status jenkins --no-pager
+Expected output: the status command reports active (running).
+
+Subtask 1.3: Initial Jenkins Configuration
+# Retrieve the initial admin password
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+Open a browser and navigate to http://localhost:8080
+Paste the initial admin password from the command above
+Click "Install suggested plugins" and wait for installation to complete
+Create an admin user account
+Accept the default Jenkins URL
+Click "Start using Jenkins"
+Deliverable: the Jenkins dashboard loads and shows "Welcome to Jenkins!" with no pending setup steps.
+
+Subtask 1.4: Confirm Required Plugins
+The "suggested plugins" set already includes Pipeline, Git, and Timestamper. Confirm they are present:
+
+Go to "Manage Jenkins" > "Plugins" > "Installed plugins"
+Confirm that Pipeline, Git, and Timestamper appear in the list
+If any are missing, install them from the "Available plugins" tab and restart Jenkins when prompted
+Deliverable: all three plugins show as installed and enabled.
+
+Task 2: Scripted Pipeline Fundamentals
+Subtask 2.1: Create Your First Scripted Pipeline
+From the Jenkins dashboard, click "New Item"
+Enter name: scripted-pipeline-basic
+Select "Pipeline" and click "OK"
+Scroll to the Pipeline section, set Definition to "Pipeline script"
+Enter the following code:
+node {
+    stage('Hello World') {
+        echo 'Hello from Scripted Pipeline!'
+        echo "Current workspace: ${env.WORKSPACE}"
+        echo "Build number: ${env.BUILD_NUMBER}"
+        echo "Job name: ${env.JOB_NAME}"
+    }
+
+    stage('Environment Info') {
+        sh 'echo "Current user: $(whoami)"'
+        sh 'echo "Current directory: $(pwd)"'
+        sh 'echo "Date and time: $(date)"'
+        sh 'uname -a'
+    }
+}
+Click "Save", then click "Build Now"
+Deliverable: build #1 finishes with a blue/green (success) status. The console output (click the build number, then "Console Output") shows the workspace path, build number, job name, and the output of whoami, pwd, date, and uname -a, followed by Finished: SUCCESS.
+
+Subtask 2.2: Compare Scripted Syntax Features
+Create a new pipeline job named syntax-comparison
+Use this scripted pipeline code:
+node {
+    // This is a scripted pipeline - more flexible but requires more Groovy knowledge
+
+    stage('Scripted Syntax Demo') {
+        echo 'This is a scripted pipeline'
+
+        // Variables can be defined anywhere
+        def myVariable = "Hello World"
+        echo "Variable value: ${myVariable}"
+
+        // Conditional logic is more flexible
+        if (env.BUILD_NUMBER.toInteger() % 2 == 0) {
+            echo "This is an even build number: ${env.BUILD_NUMBER}"
+        } else {
+            echo "This is an odd build number: ${env.BUILD_NUMBER}"
+        }
+
+        // Loops are straightforward
+        for (int i = 1; i <= 3; i++) {
+            echo "Loop iteration: ${i}"
+        }
+
+        // Try-catch blocks for error handling
+        try {
+            sh 'echo "This command will succeed"'
+        } catch (Exception e) {
+            echo "Caught an error: ${e.getMessage()}"
+        }
+    }
+}
+Save and click "Build Now"
+Deliverable: the console output shows the variable value, an even/odd message matching the actual build number, three loop iteration lines, and the success message from the try block. Run the build twice to confirm the even/odd branch changes between build #1 and build #2.
+
+Task 3: Advanced Logic, Error Handling, and Dynamic Stages
+Subtask 3.1: Complex Conditional Logic
+Create a new pipeline job named advanced-conditional-logic
+Use this scripted pipeline code:
+node {
+    def deployEnvironment = ""
+    def runTests = false
+    def buildType = ""
+
+    stage('Determine Build Configuration') {
+        echo 'Analyzing build parameters...'
+
+        def buildNum = env.BUILD_NUMBER.toInteger()
+        if (buildNum % 10 == 0) {
+            deployEnvironment = 'production'
+            buildType = 'milestone'
+        } else if (buildNum % 5 == 0) {
+            deployEnvironment = 'staging'
+            buildType = 'integration'
+        } else {
+            deployEnvironment = 'development'
+            buildType = 'continuous'
+        }
+        runTests = true
+
+        echo "Deploy Environment: ${deployEnvironment}"
+        echo "Run Tests: ${runTests}"
+        echo "Build Type: ${buildType}"
+    }
+
+    stage('Build Application') {
+        echo "Building application for ${buildType} build..."
+
+        switch (buildType) {
+            case 'milestone':
+                echo 'Performing optimized milestone build...'
+                sh 'echo "Compiling with optimization flags"'
+                break
+            case 'integration':
+                echo 'Performing integration build with debug symbols...'
+                sh 'echo "Compiling with debug information"'
+                break
+            default:
+                echo 'Performing standard continuous build...'
+                sh 'echo "Standard compilation process"'
+        }
+    }
+
+    stage('Run Tests') {
+        if (runTests) {
+            echo 'Running test suite...'
+            if (deployEnvironment == 'production') {
+                sh 'echo "Unit tests: PASSED"'
+                sh 'echo "Integration tests: PASSED"'
+                sh 'echo "Performance tests: PASSED"'
+            } else if (deployEnvironment == 'staging') {
+                sh 'echo "Unit tests: PASSED"'
+                sh 'echo "Integration tests: PASSED"'
+            } else {
+                sh 'echo "Unit tests: PASSED"'
+            }
+        } else {
+            echo 'Skipping tests for this build configuration'
+        }
+    }
+
+    stage('Deploy') {
+        echo "Deploying to ${deployEnvironment} environment..."
+        if (deployEnvironment == 'production') {
+            sh 'echo "Creating production backup"'
+            sh 'echo "Deploying to blue environment"'
+            sh 'echo "Switching traffic to blue environment"'
+        } else if (deployEnvironment == 'staging') {
+            sh 'echo "Deploying to staging servers"'
+        } else {
+            sh 'echo "Deploying to development server"'
+        }
+    }
+}
+Save the job, then click "Build Now" five times in a row
+Deliverable: across five builds, the console output shows at least two different buildType/deployEnvironment combinations, since the branch logic is driven by env.BUILD_NUMBER % 10 and % 5. Confirm build number 5 (or the next multiple of 5) triggers the staging/integration branch.
+
+Subtask 3.2: Error Handling and Retry Logic
+Create a new pipeline job named error-handling-pipeline
+Use this scripted pipeline code:
+node {
+    def maxRetries = 3
+    def retryDelay = 2 // seconds
+
+    stage('Setup') {
+        echo 'Setting up build environment...'
+        sh 'echo "Environment setup complete"'
+    }
+
+    stage('Build with Retry Logic') {
+        def buildSuccess = false
+        def attempt = 0
+
+        while (!buildSuccess && attempt < maxRetries) {
+            attempt++
+            echo "Build attempt ${attempt} of ${maxRetries}"
+
+            try {
+                sh '''
+                    echo "Starting build process..."
+                    if [ $((RANDOM % 10)) -lt 3 ]; then
+                        echo "Build failed due to simulated network timeout"
+                        exit 1
+                    else
+                        echo "Build completed successfully"
+                    fi
+                '''
+                buildSuccess = true
+                echo "Build succeeded on attempt ${attempt}"
+
+            } catch (Exception e) {
+                echo "Build failed on attempt ${attempt}: ${e.getMessage()}"
+
+                if (attempt < maxRetries) {
+                    echo "Waiting ${retryDelay} seconds before retry..."
+                    sleep(retryDelay)
+                } else {
+                    echo "All build attempts failed. Marking build as failed."
+                    throw e
+                }
+            }
+        }
+    }
+
+    stage('Test with Timeout') {
+        timeout(time: 30, unit: 'SECONDS') {
+            try {
+                echo 'Running tests with timeout protection...'
+                sh '''
+                    echo "Starting test execution..."
+                    for i in 1 2 3; do
+                        echo "Running test suite $i..."
+                        sleep 1
+                    done
+                    echo "All tests completed successfully"
+                '''
+            } catch (Exception e) {
+                echo "Tests failed or timed out: ${e.getMessage()}"
+                currentBuild.result = 'UNSTABLE'
+            }
+        }
+    }
+
+    stage('Deployment with Rollback') {
+        try {
+            echo 'Attempting deployment...'
+            sh 'echo "Creating backup of current deployment"'
+            sh '''
+                echo "Deploying new version..."
+                if [ $((RANDOM % 10)) -lt 2 ]; then
+                    echo "Deployment failed - simulated migration error"
+                    exit 1
+                else
+                    echo "Deployment completed successfully"
+                fi
+            '''
+            echo 'Deployment successful!'
+
+        } catch (Exception e) {
+            echo "Deployment failed: ${e.getMessage()}"
+            echo 'Initiating rollback procedure...'
+
+            try {
+                sh '''
+                    echo "Rolling back to previous version..."
+                    echo "Restarting services..."
+                    echo "Rollback completed successfully"
+                '''
+                currentBuild.result = 'FAILURE'
+            } catch (Exception rollbackError) {
+                echo "Rollback also failed: ${rollbackError.getMessage()}"
+                currentBuild.result = 'FAILURE'
+                throw rollbackError
+            }
+        }
+    }
+
+    stage('Cleanup') {
+        try {
+            echo 'Performing cleanup tasks...'
+            sh '''
+                echo "Cleaning temporary files..."
+                echo "Cleanup completed"
+            '''
+        } catch (Exception e) {
+            echo "Cleanup failed, but continuing: ${e.getMessage()}"
+        }
+    }
+}
+Save and click "Build Now" at least three times
+Deliverable: because the build and deployment stages use $RANDOM inside sh, at least one of your three runs should show a retry message (Build failed on attempt 1) or a rollback message. Locate one build where the retry loop executed more than once, and one build where it succeeded on attempt 1.
+
+Subtask 3.3: Dynamic Stage Generation
+Create a new pipeline job named dynamic-stages-pipeline
+Use this scripted pipeline code:
+node {
+    def environments = ['dev', 'staging', 'production']
+    def services = ['web-service', 'api-service', 'database-service']
+    def testSuites = [
+        'unit'       : ['fast', 'critical'],
+        'integration': ['api', 'database']
+    ]
+
+    stage('Configuration') {
+        echo 'Loading dynamic pipeline configuration...'
+        echo "Environments to deploy: ${environments.join(', ')}"
+        echo "Services to build: ${services.join(', ')}"
+        echo "Test suites configured: ${testSuites.keySet().join(', ')}"
+    }
+
+    for (service in services) {
+        stage("Build ${service}") {
+            echo "Building ${service}..."
+            sh "echo 'Compiling ${service}'"
+
+            if (service.contains('database')) {
+                sh "echo 'Running database migrations for ${service}'"
+            } else if (service.contains('api')) {
+                sh "echo 'Generating API documentation for ${service}'"
+            } else if (service.contains('web')) {
+                sh "echo 'Building frontend assets for ${service}'"
+            }
+        }
+    }
+
+    testSuites.each { testType, testCategories ->
+        stage("${testType.capitalize()} Tests") {
+            echo "Running ${testType} tests..."
+
+            def testSteps = [:]
+            testCategories.each { category ->
+                testSteps["${testType}-${category}"] = {
+                    echo "Running ${testType} ${category} tests..."
+                    sh "echo 'Executing ${category} test suite'"
+                    sleep(1)
+                    sh "echo '${category} tests completed successfully'"
+                }
+            }
+            parallel testSteps
+        }
+    }
+
+    for (env in environments) {
+        def isProduction = (env == 'production')
+
+        stage("Deploy to ${env.capitalize()}") {
+            echo "Deploying to ${env} environment..."
+
+            if (isProduction) {
+                echo 'Simulating manual approval gate for production deployment'
+            }
+
+            for (service in services) {
+                echo "Deploying ${service} to ${env}..."
+                if (env == 'production') {
+                    sh "echo 'Using blue-green deployment for ${service}'"
+                } else if (env == 'staging') {
+                    sh "echo 'Running staging validation for ${service}'"
+                } else {
+                    sh "echo 'Quick deployment to ${env} for ${service}'"
+                }
+            }
+        }
+    }
+
+    stage('Generate Report') {
+        echo 'Generating deployment report...'
+
+        def report = []
+        report << "=== Deployment Report ==="
+        report << "Build Number: ${env.BUILD_NUMBER}"
+        report << ""
+        report << "Services Built:"
+        services.each { svc -> report << "  - ${svc}: SUCCESS" }
+        report << ""
+        report << "Test Suites Run:"
+        testSuites.each { type, cats -> report << "  - ${type}: ${cats.join(', ')}" }
+        report << ""
+        report << "Environments Deployed:"
+        environments.each { e -> report << "  - ${e}: SUCCESS" }
+
+        writeFile file: 'deployment-report.txt', text: report.join('\n')
+        echo report.join('\n')
+        archiveArtifacts artifacts: 'deployment-report.txt', fingerprint: true
+    }
+}
+Save and click "Build Now"
+Deliverable: the Jenkins "Stage View" for this build shows a separate stage box for each service build, each test-type stage, and each environment deployment (9 dynamically generated stages plus Configuration and Generate Report). The build artifacts list (on the build page) contains deployment-report.txt.
+
+Task 4: Reusable Functions and Simulated Tool Integration
+Subtask 4.1: Pipeline with Reusable Functions
+Create a new pipeline job named functions-and-tools
+Use this scripted pipeline code:
+def buildService(serviceName, buildType) {
+    echo "Building ${serviceName} with ${buildType} configuration..."
+
+    if (buildType == 'optimized') {
+        sh "echo 'Building ${serviceName} with optimization flags'"
+    } else {
+        sh "echo 'Building ${serviceName} with standard configuration'"
+    }
+
+    return "Build completed for ${serviceName}"
+}
+
+def runQualityCheck() {
+    echo 'Running simulated code quality analysis...'
+    sh '''
+        echo "Quality Gate: PASSED" > sonar-results.txt
+        echo "Coverage: 85%" >> sonar-results.txt
+        echo "Bugs: 0" >> sonar-results.txt
+    '''
+    def results = readFile('sonar-results.txt')
+    echo "Quality Results:\n${results}"
+    return results.contains('Quality Gate: PASSED')
+}
+
+def runSecurityScan() {
+    echo 'Running simulated security scan...'
+    sh '''
+        echo "High: 0" > security-report.txt
+        echo "Medium: 2" >> security-report.txt
+        echo "Low: 5" >> security-report.txt
+    '''
+    def report = readFile('security-report.txt')
+    echo "Security Scan Results:\n${report}"
+    return report.contains('High: 0')
+}
+
+node {
+    def services = ['user-service', 'payment-service']
+    def buildResults = [:]
+
+    stage('Build Services') {
+        services.each { svc ->
+            def type = svc.contains('payment') ? 'optimized' : 'standard'
+            buildResults[svc] = buildService(svc, type)
+        }
+        echo 'Build Results:'
+        buildResults.each { svc, result -> echo "  ${svc}: ${result}" }
+    }
+
+    stage('Quality Gate') {
+        def qualityPassed = runQualityCheck()
+        if (!qualityPassed) {
+            error('Quality gate failed - stopping pipeline')
+        }
+        echo 'Quality gate passed - proceeding with pipeline'
+    }
+
+    stage('Security Scan') {
+        def secure = runSecurityScan()
+        if (secure) {
+            echo 'No high severity vulnerabilities found'
+        } else {
+            echo 'WARNING: High severity vulnerabilities detected'
+            currentBuild.result = 'UNSTABLE'
+        }
+    }
+
+    stage('Archive Results') {
+        archiveArtifacts artifacts: '*-results.txt, *-report.txt', allowEmptyArchive: true
+        echo 'Pipeline completed successfully'
+    }
+}
+Save and click "Build Now"
+Deliverable: the console output shows both functions being invoked with different arguments (buildService called twice with different buildType values), the quality gate result, and the security scan result. The build's Artifacts section contains sonar-results.txt and security-report.txt.
+
+Subtask 4.2: Parallel Automated Testing Stage
+Create a new pipeline job named parallel-testing-pipeline
+Use this scripted pipeline code:
+node {
+    def projectName = "advanced-app"
+    def version = "1.0.${env.BUILD_NUMBER}"
+
+    stage('Build and Package') {
+        echo "Building ${projectName} version ${version}..."
+        sh """
+            echo 'Building application...'
+            mkdir -p target
+            echo 'Application built successfully' > target/${projectName}-${version}.jar
+        """
+    }
+
+    stage('Automated Testing') {
+        parallel(
+            'Unit Tests': {
+                echo 'Running unit tests...'
+                sh '''
+                    echo "Executing JUnit tests..."
+                    echo "Tests run: 150, Failures: 0, Errors: 0, Skipped: 5" > unit-test-results.txt
+                    echo "Unit tests completed successfully"
+                '''
+            },
+            'Integration Tests': {
+                echo 'Running integration tests...'
+                sh '''
+                    echo "Starting test database..."
+                    echo "Running integration test suite..."
+                    echo "Tests run: 45, Failures: 0, Errors: 0, Skipped: 2" > integration-test-results.txt
+                    echo "Integration tests completed successfully"
+                '''
+            }
+        )
+    }
+
+    stage('Artifact Management') {
+        echo 'Archiving build artifacts and test reports...'
+        archiveArtifacts artifacts: 'target/*.jar, *-test-results.txt', fingerprint: true, allowEmptyArchive: true
+    }
+
+    stage('Deployment') {
+        echo "Deploying ${projectName} version ${version} to staging..."
+        sh '''
+            echo "Deploying to staging servers..."
+            echo "Running staging validation tests..."
+            echo "Deployment completed successfully"
+        '''
+    }
+
+    stage('Monitoring') {
+        echo 'Running post-deployment health check...'
+        sh '''
+            echo "Checking service health endpoint..."
+            echo "Service status: HEALTHY"
+        '''
+    }
+
+    stage('Summary Report') {
+        def summary = []
+        summary << "=== Pipeline Summary ==="
+        summary << "Project: ${projectName}"
+        summary << "Version: ${version}"
+        summary << "Build: #${env.BUILD_NUMBER}"
+        summary << "Unit Tests: 150 run, 0 failures"
+        summary << "Integration Tests: 45 run, 0 failures"
+        summary << "Deployment: SUCCESS"
+        summary << "Monitoring: HEALTHY"
+
+        writeFile file: 'pipeline-summary.txt', text: summary.join('\n')
+        echo summary.join('\n')
+        archiveArtifacts artifacts: 'pipeline-summary.txt', fingerprint: true
+    }
+}
+Save and click "Build Now"
+Deliverable: the Stage View shows "Unit Tests" and "Integration Tests" running as parallel branches inside the "Automated Testing" stage. The build artifacts list contains unit-test-results.txt, integration-test-results.txt, and pipeline-summary.txt, and the console output ends with Finished: SUCCESS.
+
+Expected Outcomes
+A working local Jenkins instance with at least six scripted pipeline jobs created and successfully executed
+Practical experience writing scripted pipelines that use conditionals, loops, try/catch error handling, retry loops, dynamic stage generation, reusable functions, and parallel test execution
+Archived build artifacts (reports and simulated test results) demonstrating that pipeline stages produced and preserved output correctly
+Troubleshooting
+Symptom: A pipeline fails immediately with groovy.lang.MissingPropertyException: No such property: BRANCH_NAME. Diagnostic hint: env.BRANCH_NAME is only populated for Multibranch Pipeline jobs, not standard Pipeline jobs; check which job type you created and adjust the script to use env.BUILD_NUMBER logic instead, as shown in Subtask 3.1.
+Symptom: The parallel block in Subtask 4.2 runs both branches but the build still shows only a single sequential timeline in older Jenkins UI themes. Diagnostic hint: confirm the Pipeline plugin and Jenkins core are up to date, and check the "Console Output" (not just Stage View) for interleaved log lines from both branches to confirm true parallel execution.
+Conclusion
+In this lab, you installed Jenkins from scratch and built a series of scripted pipelines that progressed from basic node/stage syntax to advanced techniques including branching logic, retry-and-rollback error handling, dynamically generated stages driven by Groovy collections, reusable pipeline functions, and parallel test execution with archived reporting. These exercises demonstrate the flexibility that scripted pipelines offer over declarative syntax when a workflow needs genuine programming constructs such as loops over service lists or functions shared across stages. To continue building on these skills, explore Jenkins Shared Libraries to move reusable functions like buildService and runQualityCheck into a version-controlled library usable across multiple jobs, investigate webhook-triggered builds so pipelines start automatically on Git push events, and study pipeline performance optimization techniques such as parallelizing independent stages and using lightweight executors to reduce overall build time.
