@@ -1,0 +1,547 @@
+Using Docker with Jenkins
+Lab Objectives
+By the end of this lab, you will be able to:
+
+Install and configure Docker on a Linux system
+Set up Jenkins with Docker integration capabilities
+Create Jenkins pipelines that build Docker images
+Automate Docker container builds and deployments through Jenkins
+Push Docker images to Docker Hub registry from Jenkins
+Understand the integration between CI/CD pipelines and containerization
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Linux command line operations
+Familiarity with Docker concepts (containers, images, Dockerfile)
+Basic knowledge of Jenkins and CI/CD concepts
+Understanding of version control systems (Git)
+A Docker Hub account (free registration at hub.docker.com)
+Lab Environment
+Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated Linux machine. The provided Linux machine is bare metal with no pre-installed tools, so you will install all required tools during this lab exercise.
+
+Task 1: Environment Setup and Tool Installation
+Subtask 1.1: Update System and Install Prerequisites
+First, update your system and install necessary packages:
+
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y curl wget apt-transport-https ca-certificates gnupg lsb-release git
+Subtask 1.2: Install Docker
+Install Docker Engine on your Linux machine:
+
+# Add Docker's official GPG key
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+# Add Docker repository
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Update package index and install Docker
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Start and enable Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Add current user to docker group
+sudo usermod -aG docker $USER
+
+# Apply group changes
+newgrp docker
+Verify Docker installation:
+
+docker --version
+docker run hello-world
+Subtask 1.3: Install Java (Required for Jenkins)
+Install OpenJDK 11 which is required for Jenkins:
+
+sudo apt install -y openjdk-11-jdk
+java -version
+Subtask 1.4: Install Jenkins
+Install Jenkins on your system:
+
+# Add Jenkins repository key
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+
+# Add Jenkins repository
+echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/ | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Update package index and install Jenkins
+sudo apt update
+sudo apt install -y jenkins
+
+# Start and enable Jenkins service
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
+Check Jenkins status:
+
+sudo systemctl status jenkins
+Subtask 1.5: Configure Jenkins Initial Setup
+Get the initial admin password:
+
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+Access Jenkins web interface:
+
+# Get your machine's IP address
+ip addr show | grep inet
+Open a web browser and navigate to http://YOUR_IP_ADDRESS:8080
+
+Complete the Jenkins setup wizard:
+
+Enter the initial admin password
+Select Install suggested plugins
+Create an admin user account
+Configure Jenkins URL (use default)
+Click Start using Jenkins
+Task 2: Integrate Docker with Jenkins Pipeline
+Subtask 2.1: Install Docker Pipeline Plugin
+In Jenkins web interface:
+
+Go to Manage Jenkins > Manage Plugins
+Click on Available tab
+Search for Docker Pipeline
+Select the checkbox next to Docker Pipeline
+Click Install without restart
+Wait for installation to complete
+Subtask 2.2: Configure Docker in Jenkins
+Add Jenkins user to Docker group:
+
+sudo usermod -aG docker jenkins
+sudo systemctl restart jenkins
+Verify Docker access for Jenkins:
+
+sudo -u jenkins docker ps
+Subtask 2.3: Create Sample Application
+Create a directory structure for your sample application:
+
+mkdir -p ~/jenkins-docker-lab
+cd ~/jenkins-docker-lab
+Create a simple Node.js application:
+
+cat > package.json << 'EOF'
+{
+  "name": "jenkins-docker-app",
+  "version": "1.0.0",
+  "description": "Sample app for Jenkins Docker integration",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
+EOF
+Create the main application file:
+
+cat > app.js << 'EOF'
+const express = require('express');
+const app = express();
+const port = 3000;
+
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Hello from Jenkins Docker Integration Lab!',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0'
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
+app.listen(port, '0.0.0.0', () => {
+  console.log(`App running on port ${port}`);
+});
+EOF
+Create a Dockerfile:
+
+cat > Dockerfile << 'EOF'
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --production
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
+EOF
+Create a .dockerignore file:
+
+cat > .dockerignore << 'EOF'
+node_modules
+npm-debug.log
+.git
+.gitignore
+README.md
+Dockerfile
+.dockerignore
+EOF
+Subtask 2.4: Initialize Git Repository
+Initialize a Git repository for your project:
+
+git init
+git config user.name "Jenkins Lab User"
+git config user.email "jenkins@lab.local"
+
+cat > .gitignore << 'EOF'
+node_modules/
+npm-debug.log*
+.env
+EOF
+
+git add .
+git commit -m "Initial commit: Sample Node.js app with Dockerfile"
+Task 3: Build and Push Docker Images from Jenkins Pipeline
+Subtask 3.1: Create Jenkins Pipeline Job
+In Jenkins web interface:
+
+Click New Item
+Enter item name: docker-build-pipeline
+Select Pipeline
+Click OK
+Subtask 3.2: Configure Docker Hub Credentials
+Before creating the pipeline, set up Docker Hub credentials:
+
+In Jenkins, go to Manage Jenkins > Manage Credentials
+Click on (global) domain
+Click Add Credentials
+Select Username with password
+Enter your Docker Hub username and password
+Set ID as dockerhub-credentials
+Click OK
+Subtask 3.3: Create Pipeline Script
+In the pipeline configuration, scroll down to Pipeline section and enter this script:
+
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_IMAGE = 'your-dockerhub-username/jenkins-docker-app'
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                    // Since we're working locally, copy files to workspace
+                    sh '''
+                        cp -r /home/*/jenkins-docker-lab/* ${WORKSPACE}/
+                        ls -la ${WORKSPACE}/
+                    '''
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    echo 'Building Docker image...'
+                    sh '''
+                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                        docker build -t ${DOCKER_IMAGE}:latest .
+                    '''
+                }
+            }
+        }
+        
+        stage('Test Docker Image') {
+            steps {
+                script {
+                    echo 'Testing Docker image...'
+                    sh '''
+                        # Run container in background
+                        docker run -d --name test-container -p 3001:3000 ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        
+                        # Wait for container to start
+                        sleep 10
+                        
+                        # Test the application
+                        curl -f http://localhost:3001/ || exit 1
+                        curl -f http://localhost:3001/health || exit 1
+                        
+                        # Stop and remove test container
+                        docker stop test-container
+                        docker rm test-container
+                    '''
+                }
+            }
+        }
+        
+        stage('Login to Docker Hub') {
+            steps {
+                script {
+                    echo 'Logging in to Docker Hub...'
+                    sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+                }
+            }
+        }
+        
+        stage('Push to Docker Hub') {
+            steps {
+                script {
+                    echo 'Pushing image to Docker Hub...'
+                    sh '''
+                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        docker push ${DOCKER_IMAGE}:latest
+                    '''
+                }
+            }
+        }
+        
+        stage('Deploy Container') {
+            steps {
+                script {
+                    echo 'Deploying container...'
+                    sh '''
+                        # Stop existing container if running
+                        docker stop jenkins-app || true
+                        docker rm jenkins-app || true
+                        
+                        # Run new container
+                        docker run -d --name jenkins-app -p 3000:3000 ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        
+                        # Verify deployment
+                        sleep 5
+                        curl -f http://localhost:3000/ || exit 1
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                echo 'Cleaning up...'
+                sh '''
+                    docker logout
+                    # Clean up old images (keep last 3 builds)
+                    docker images ${DOCKER_IMAGE} --format "table {{.Tag}}" | grep -E '^[0-9]+$' | sort -nr | tail -n +4 | xargs -I {} docker rmi ${DOCKER_IMAGE}:{} || true
+                '''
+            }
+        }
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed. Check logs for details.'
+        }
+    }
+}
+Important: Replace your-dockerhub-username in the pipeline script with your actual Docker Hub username.
+
+Subtask 3.4: Run the Pipeline
+Click Save to save the pipeline configuration
+Click Build Now to run the pipeline
+Monitor the build progress in the Build History
+Click on the build number to view detailed logs
+Subtask 3.5: Verify Pipeline Execution
+Check that all stages completed successfully:
+
+# Verify the application is running
+curl http://localhost:3000/
+curl http://localhost:3000/health
+
+# Check running containers
+docker ps
+
+# Verify images were built
+docker images | grep jenkins-docker-app
+Subtask 3.6: Create Advanced Pipeline with Multi-Stage Build
+Create an enhanced pipeline that demonstrates more Docker features:
+
+cd ~/jenkins-docker-lab
+cat > Dockerfile.multistage << 'EOF'
+# Multi-stage build for optimized production image
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+FROM node:18-alpine AS production
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
+
+WORKDIR /app
+
+# Copy dependencies from builder stage
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
+COPY --chown=nodejs:nodejs . .
+
+USER nodejs
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+
+CMD ["npm", "start"]
+EOF
+Create a new pipeline job called docker-multistage-pipeline with this enhanced script:
+
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_IMAGE = 'your-dockerhub-username/jenkins-docker-app'
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                    sh '''
+                        cp -r /home/*/jenkins-docker-lab/* ${WORKSPACE}/
+                        ls -la ${WORKSPACE}/
+                    '''
+                }
+            }
+        }
+        
+        stage('Build Multi-stage Image') {
+            steps {
+                script {
+                    echo 'Building optimized Docker image with multi-stage build...'
+                    sh '''
+                        docker build -f Dockerfile.multistage -t ${DOCKER_IMAGE}:${DOCKER_TAG}-optimized .
+                        docker build -f Dockerfile.multistage -t ${DOCKER_IMAGE}:latest-optimized .
+                    '''
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            steps {
+                script {
+                    echo 'Performing basic security checks...'
+                    sh '''
+                        # Check for non-root user
+                        docker run --rm ${DOCKER_IMAGE}:${DOCKER_TAG}-optimized whoami
+                        
+                        # Check image size
+                        docker images ${DOCKER_IMAGE}:${DOCKER_TAG}-optimized
+                    '''
+                }
+            }
+        }
+        
+        stage('Performance Test') {
+            steps {
+                script {
+                    echo 'Running performance tests...'
+                    sh '''
+                        # Start container
+                        docker run -d --name perf-test -p 3002:3000 ${DOCKER_IMAGE}:${DOCKER_TAG}-optimized
+                        
+                        # Wait for startup
+                        sleep 15
+                        
+                        # Simple load test
+                        for i in {1..10}; do
+                            curl -s http://localhost:3002/ > /dev/null
+                            echo "Request $i completed"
+                        done
+                        
+                        # Check container health
+                        docker exec perf-test curl -f http://localhost:3000/health
+                        
+                        # Cleanup
+                        docker stop perf-test
+                        docker rm perf-test
+                    '''
+                }
+            }
+        }
+        
+        stage('Push Optimized Images') {
+            steps {
+                script {
+                    echo 'Pushing optimized images to Docker Hub...'
+                    sh '''
+                        echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
+                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}-optimized
+                        docker push ${DOCKER_IMAGE}:latest-optimized
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            sh 'docker logout'
+        }
+    }
+}
+Verification and Testing
+Verify Complete Integration
+Test the complete Docker-Jenkins integration:
+
+# Check Jenkins service
+sudo systemctl status jenkins
+
+# Check Docker service
+sudo systemctl status docker
+
+# List all Docker images created
+docker images
+
+# Check running containers
+docker ps
+
+# Test the deployed application
+curl http://localhost:3000/
+curl http://localhost:3000/health
+
+# Check Jenkins build history
+ls -la /var/lib/jenkins/jobs/
+Troubleshooting Common Issues
+Issue 1: Docker permission denied
+
+# Solution: Ensure Jenkins user is in docker group
+sudo usermod -aG docker jenkins
+sudo systemctl restart jenkins
+Issue 2: Port already in use
+
+# Solution: Stop conflicting containers
+docker stop $(docker ps -q)
+# Or use different ports in pipeline
+Issue 3: Docker Hub authentication fails
+
+# Solution: Verify credentials in Jenkins
+# Re-create credentials with correct Docker Hub username/password
+Issue 4: Pipeline fails at build stage
+
+# Solution: Check Dockerfile syntax and dependencies
+docker build -t test-image .
+Lab Summary
+In this comprehensive lab, you have successfully:
+
+Set up a complete CI/CD environment by installing and configuring Docker and Jenkins on a single Linux machine
+Integrated Docker with Jenkins by installing necessary plugins and configuring proper permissions
+Created automated pipelines that build Docker images from source code automatically
+Implemented Docker image testing within the CI/CD pipeline to ensure quality
+Automated Docker Hub deployments by pushing built images to a container registry
+Deployed containerized applications directly from Jenkins pipelines
+Implemented advanced Docker features including multi-stage builds and security scanning
+This integration between Docker and Jenkins represents a modern DevOps approach where:
+
+Code changes trigger automatic builds reducing manual intervention
+Containerization ensures consistency across different environments
+Automated testing catches issues early in the development cycle
+Registry integration enables easy distribution of applications
+Pipeline automation reduces deployment time and human error
+The skills you've learned in this lab are directly applicable to real-world scenarios where organizations need to rapidly and reliably deploy applications using containerization technology. This foundation prepares you for more advanced topics like Kubernetes orchestration, advanced security scanning, and enterprise-scale CI/CD implementations.
+
+Understanding Docker-Jenkins integration is crucial for modern software development teams as it bridges the gap between development and operations, enabling faster delivery of high-quality software products.
