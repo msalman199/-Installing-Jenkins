@@ -1,0 +1,542 @@
+Handling Jenkins Pipeline Failures
+Lab Objectives
+By the end of this lab, students will be able to:
+
+Understand different types of Jenkins pipeline failures and their causes
+Implement retry mechanisms with exponential backoff for transient failures in Jenkins pipelines
+Configure Jenkins pipelines to send email notifications on build failure
+Create robust, reusable error handling strategies in Jenkins declarative pipelines using shared helper functions
+Implement a deploy-with-rollback pattern that validates deployments via health checks
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Jenkins and CI/CD concepts
+Familiarity with Jenkins declarative pipeline syntax
+Basic knowledge of Linux command line operations
+Understanding of Git version control system
+Completion of an introductory Jenkins lab or equivalent experience
+This lab is performed entirely on a self-owned, isolated practice machine (such as the Al Nafi cloud lab environment) so that pipeline failure handling and rollback logic can be studied safely without affecting any production system.
+
+Required tools (installed during the lab):
+
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y wget curl git openjdk-17-jdk
+Lab Environment Setup
+Note: Al Nafi provides Linux-based cloud machines for this lab. Simply click "Start Lab" to access your dedicated Linux machine. The provided machine is bare metal with no pre-installed tools, so you will install all required tools during the lab exercises.
+
+Task 1: Install Jenkins and Prepare a Sample Project
+Step 1.1: Install Java and Jenkins
+# Update package repositories and install Java
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y wget curl git openjdk-17-jdk
+
+# Verify Java installation
+java -version
+
+# Add the Jenkins repository key and source list
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee \
+  /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc]" \
+  "https://pkg.jenkins.io/debian-stable binary/" | sudo tee \
+  /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Install Jenkins
+sudo apt update
+sudo apt install -y jenkins
+
+# Start and enable the Jenkins service
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
+sudo systemctl status jenkins --no-pager
+Step 1.2: Complete Initial Jenkins Setup
+# Retrieve the initial administrator password
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+Open a browser and navigate to http://localhost:8080 (or your lab machine's address on port 8080).
+Paste the initial admin password.
+Select Install suggested plugins and wait for installation to finish.
+Create an admin user and complete the setup wizard.
+From Manage Jenkins > Plugins > Available plugins, install the Email Extension Plugin, then restart Jenkins:
+sudo systemctl restart jenkins
+Step 1.3: Create the Sample Application Repository
+Create a small, intentionally unreliable application that the pipeline will build, test, and deploy. This lets us safely observe failure handling without needing a real production service.
+
+mkdir -p ~/jenkins-failure-lab
+cd ~/jenkins-failure-lab
+git init
+
+cat > app.py << 'EOF'
+#!/usr/bin/env python3
+import sys
+import random
+import time
+
+def unreliable_build():
+    """Simulates a build step that fails intermittently."""
+    time.sleep(1)
+    if random.random() < 0.4:
+        print("ERROR: Simulated build failure!")
+        sys.exit(1)
+    print("SUCCESS: Build completed successfully!")
+    return True
+
+if __name__ == "__main__":
+    print("Starting build...")
+    unreliable_build()
+EOF
+
+cat > test.py << 'EOF'
+#!/usr/bin/env python3
+import subprocess
+import sys
+
+def run_tests():
+    """Runs the application once as a stand-in for a test suite."""
+    print("Running tests...")
+    result = subprocess.run([sys.executable, "app.py"], capture_output=True, text=True)
+    print(result.stdout)
+    if result.returncode == 0:
+        print("All tests passed!")
+        return True
+    print("Tests failed!")
+    sys.exit(1)
+
+if __name__ == "__main__":
+    run_tests()
+EOF
+
+cat > serve.py << 'EOF'
+#!/usr/bin/env python3
+"""Minimal HTTP server used to simulate a deployed service for health checks."""
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Suppress default request logging
+
+if __name__ == "__main__":
+    server = HTTPServer(("127.0.0.1", 8099), HealthHandler)
+    print("Serving health endpoint on port 8099...")
+    server.serve_forever()
+EOF
+
+chmod +x app.py test.py serve.py
+
+git add .
+git config user.email "student@example.com"
+git config user.name "Student"
+git commit -m "Initial commit: sample app with build, test, and health endpoint"
+Deliverable for Task 1: Jenkins is running and reachable at http://localhost:8080, the Email Extension plugin is installed, and ~/jenkins-failure-lab contains app.py, test.py, and serve.py committed to a local Git repository. Running cd ~/jenkins-failure-lab && git log --oneline should show one commit.
+
+Task 2: Build a Pipeline with Retry Logic and Email Notifications
+Step 2.1: Configure Email Notification Settings
+Go to Manage Jenkins > System.
+Scroll to the Extended E-mail Notification section and set:
+SMTP server: smtp.gmail.com
+SMTP Port: 587
+Use SMTP Authentication: checked
+Username: your-email@example.com
+Password: your-app-password
+Use TLS: checked
+Default Recipients: your-email@example.com
+Click Save. (If no real mail server is available in your practice environment, leave the fields configured as above; the pipeline logic itself will still be validated through console output in Task 2.3, and the emailext step will simply log a delivery attempt.)
+Step 2.2: Create the Retry-and-Notify Pipeline
+In Jenkins, click New Item, name it failure-handling-pipeline, choose Pipeline, and click OK.
+Scroll to the Pipeline section, choose Pipeline script, and enter:
+pipeline {
+    agent any
+
+    environment {
+        RECIPIENT_EMAIL = 'your-email@example.com'
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                    deleteDir()
+                    sh '''
+                        cp -r $HOME/jenkins-failure-lab/* . 2>/dev/null || \
+                        cp -r /root/jenkins-failure-lab/* . 2>/dev/null
+                        ls -la
+                    '''
+                }
+            }
+        }
+
+        stage('Build with Retry') {
+            steps {
+                retry(3) {
+                    sh '''
+                        echo "Build attempt at $(date)"
+                        python3 app.py
+                    '''
+                }
+            }
+        }
+
+        stage('Test with Backoff') {
+            steps {
+                script {
+                    def maxRetries = 3
+                    def attempt = 0
+                    def success = false
+
+                    while (attempt < maxRetries && !success) {
+                        attempt++
+                        try {
+                            echo "Test attempt ${attempt} of ${maxRetries}"
+                            sh 'python3 test.py'
+                            success = true
+                            echo "Tests passed on attempt ${attempt}"
+                        } catch (Exception e) {
+                            echo "Test attempt ${attempt} failed: ${e.getMessage()}"
+                            if (attempt < maxRetries) {
+                                def delay = attempt * 2
+                                echo "Waiting ${delay} seconds before retry..."
+                                sleep(delay)
+                            } else {
+                                echo "All test retries exhausted"
+                                throw e
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Pipeline execution completed with result: ${currentBuild.currentResult}"
+        }
+
+        success {
+            emailext(
+                subject: "SUCCESS: ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+                body: """
+                    <h2>Build Successful</h2>
+                    <p>Job: ${env.JOB_NAME}, Build: ${env.BUILD_NUMBER}</p>
+                    <p>URL: ${env.BUILD_URL}</p>
+                """,
+                mimeType: 'text/html',
+                to: "${env.RECIPIENT_EMAIL}"
+            )
+        }
+
+        failure {
+            emailext(
+                subject: "FAILURE: ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+                body: """
+                    <h2 style="color:red;">Build Failed</h2>
+                    <p>Job: ${env.JOB_NAME}, Build: ${env.BUILD_NUMBER}</p>
+                    <p>Console: ${env.BUILD_URL}console</p>
+                """,
+                mimeType: 'text/html',
+                to: "${env.RECIPIENT_EMAIL}",
+                attachLog: true
+            )
+        }
+    }
+}
+Click Save.
+Step 2.3: Run and Observe Retry Behavior
+Click Build Now at least five times to account for the randomness built into app.py.
+For each build, open the Console Output and locate the lines beginning with Build attempt at and Test attempt.
+Deliverable for Task 2: At least one build in your history shows a stage that failed on attempt 1 or 2 and then succeeded on a later attempt (visible in the console log as multiple Build attempt or Test attempt lines within a single build), demonstrating that the retry step and the manual backoff loop both function correctly. Confirm the Stage View shows the pipeline reaching a SUCCESS or FAILURE result after all attempts are exhausted.
+
+Task 3: Advanced Error Handling with Helper Functions and Rollback
+This task consolidates retries, structured failure handling, notifications, and a deploy-with-rollback pattern into a single pipeline using Groovy helper functions defined at the bottom of the script.
+
+Step 3.1: Create the Advanced Pipeline
+Create a new pipeline job named advanced-error-handling-pipeline.
+Use the following pipeline script:
+pipeline {
+    agent any
+
+    environment {
+        MAX_RETRIES = '3'
+        NOTIFICATION_EMAIL = 'your-email@example.com'
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        skipDefaultCheckout(true)
+    }
+
+    stages {
+        stage('Initialize') {
+            steps {
+                script {
+                    env.FAILED_STAGES = ''
+                    echo "Pipeline initialized"
+                    sendNotification('STARTED', 'Pipeline execution started')
+                }
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                script {
+                    try {
+                        deleteDir()
+                        sh '''
+                            cp -r $HOME/jenkins-failure-lab/* . 2>/dev/null || \
+                            cp -r /root/jenkins-failure-lab/* . 2>/dev/null
+                            echo "Source checked out successfully"
+                        '''
+                    } catch (Exception e) {
+                        handleStageFailure('Checkout', e.getMessage())
+                        throw e
+                    }
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                script {
+                    def maxAttempts = env.MAX_RETRIES as Integer
+                    def attempt = 0
+                    def success = false
+
+                    while (!success && attempt < maxAttempts) {
+                        attempt++
+                        try {
+                            echo "Build attempt ${attempt}/${maxAttempts}"
+                            sh 'python3 app.py'
+                            success = true
+                        } catch (Exception e) {
+                            if (attempt < maxAttempts) {
+                                def waitTime = attempt * 2
+                                echo "Waiting ${waitTime} seconds before retry..."
+                                sleep(waitTime)
+                            } else {
+                                handleStageFailure('Build', "Failed after ${attempt} attempts: ${e.getMessage()}")
+                                throw e
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                script {
+                    try {
+                        retryWithBackoff('Test') {
+                            sh 'python3 test.py'
+                        }
+                    } catch (Exception e) {
+                        handleStageFailure('Test', e.getMessage())
+                        throw e
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            when {
+                expression { currentBuild.result != 'FAILURE' }
+            }
+            steps {
+                script {
+                    try {
+                        deployWithRollback()
+                    } catch (Exception e) {
+                        handleStageFailure('Deploy', e.getMessage())
+                        throw e
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo "Pipeline completed with result: ${currentBuild.currentResult}"
+                generateBuildReport()
+            }
+        }
+
+        success {
+            script {
+                sendNotification('SUCCESS', 'Pipeline completed successfully!')
+            }
+        }
+
+        failure {
+            script {
+                def failedStages = env.FAILED_STAGES?.trim() ?: 'Unknown'
+                sendNotification('FAILURE', "Pipeline failed in stages: ${failedStages}")
+            }
+        }
+
+        unstable {
+            script {
+                sendNotification('UNSTABLE', 'Pipeline completed with warnings')
+            }
+        }
+    }
+}
+
+// Retries a block of steps with exponential backoff
+def retryWithBackoff(stageName, closure) {
+    def maxRetries = 3
+    def baseDelay = 2
+
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            echo "${stageName}: attempt ${attempt}/${maxRetries}"
+            closure()
+            echo "${stageName}: succeeded on attempt ${attempt}"
+            return
+        } catch (Exception e) {
+            if (attempt < maxRetries) {
+                def delay = baseDelay * Math.pow(2, attempt - 1) as int
+                echo "${stageName}: attempt ${attempt} failed, waiting ${delay} seconds..."
+                sleep(delay)
+            } else {
+                echo "${stageName}: all retry attempts exhausted"
+                throw e
+            }
+        }
+    }
+}
+
+// Deploys the sample service and validates it with a health check, rolling back on failure
+def deployWithRollback() {
+    echo "Starting deployment..."
+
+    sh '''
+        echo "Stopping any previous instance..."
+        pkill -f serve.py || true
+        sleep 1
+
+        echo "Starting service..."
+        nohup python3 serve.py > serve.log 2>&1 &
+        sleep 2
+    '''
+
+    // Health check after deployment: verify the HTTP endpoint responds correctly.
+    // Retries a few times before declaring the deployment unhealthy and rolling back.
+    def healthCheckPassed = false
+    def healthAttempts = 3
+
+    for (int i = 1; i <= healthAttempts; i++) {
+        try {
+            sh '''
+                echo "Health check attempt against http://127.0.0.1:8099/health"
+                response=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8099/health)
+                echo "HTTP status code: ${response}"
+                if [ "${response}" != "200" ]; then
+                    echo "Health check failed with status ${response}"
+                    exit 1
+                fi
+                echo "Health check passed"
+            '''
+            healthCheckPassed = true
+            echo "Deployment healthy on health check attempt ${i}"
+            break
+        } catch (Exception e) {
+            echo "Health check attempt ${i} failed: ${e.getMessage()}"
+            if (i < healthAttempts) {
+                sleep(3)
+            }
+        }
+    }
+
+    if (!healthCheckPassed) {
+        echo "Deployment failed health checks. Rolling back..."
+        sh '''
+            pkill -f serve.py || true
+            echo "Rolled back: previous service instance stopped"
+        '''
+        error("Deployment health check failed after ${healthAttempts} attempts; rollback performed")
+    }
+
+    echo "Deployment successful and verified healthy"
+}
+
+// Records which stage failed and appends it to the FAILED_STAGES environment variable
+def handleStageFailure(stageName, errorMessage) {
+    echo "Stage '${stageName}' failed: ${errorMessage}"
+    env.FAILED_STAGES = "${env.FAILED_STAGES ?: ''}${stageName} "
+}
+
+// Sends an email notification summarizing the current pipeline status
+def sendNotification(status, message) {
+    echo "Notification [${status}]: ${message}"
+
+    def subjectPrefix = status
+    def color = status == 'SUCCESS' ? 'green' : (status == 'FAILURE' ? 'red' : 'orange')
+
+    emailext(
+        subject: "${subjectPrefix}: ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+        body: """
+            <h2 style="color:${color};">${status}</h2>
+            <p>${message}</p>
+            <p>Job: ${env.JOB_NAME}, Build: ${env.BUILD_NUMBER}</p>
+            <p>URL: ${env.BUILD_URL}</p>
+        """,
+        mimeType: 'text/html',
+        to: "${env.NOTIFICATION_EMAIL}"
+    )
+}
+
+// Writes a simple text build report as a build artifact
+def generateBuildReport() {
+    def failedStages = env.FAILED_STAGES?.trim() ?: 'None'
+
+    sh """
+        cat > build-report.txt << EOF
+Build Report
+============
+Job: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+Result: ${currentBuild.currentResult}
+Duration: ${currentBuild.durationString}
+Failed Stages: ${failedStages}
+EOF
+        cat build-report.txt
+    """
+
+    archiveArtifacts artifacts: 'build-report.txt', allowEmptyArchive: true
+}
+Click Save.
+Step 3.2: Run the Pipeline and Verify Rollback Behavior
+Click Build Now at least five times to observe variation caused by the randomness in app.py.
+In the console output, locate the Deploy stage and verify that:
+serve.py is started with nohup.
+The health check performs a curl request to http://127.0.0.1:8099/health and checks for HTTP status 200.
+If the health check fails, the log shows Rolling back... followed by pkill -f serve.py and the build fails with the message Deployment health check failed after 3 attempts; rollback performed.
+Open Build Artifacts for a completed build and confirm build-report.txt is present, listing the job name, result, duration, and any failed stages.
+Deliverable for Task 3: A completed build of advanced-error-handling-pipeline whose console log shows the Health check attempt messages and whose archived artifact build-report.txt correctly lists Result: SUCCESS (or FAILURE) along with the Failed Stages field populated from handleStageFailure.
+
+Expected Outcomes
+A working Jenkins pipeline (failure-handling-pipeline) that demonstrates both the built-in retry() step and a custom exponential-backoff retry loop, with email notifications configured for success and failure.
+A second pipeline (advanced-error-handling-pipeline) using reusable Groovy helper functions (retryWithBackoff, handleStageFailure, sendNotification, generateBuildReport) and a deployWithRollback function that performs an HTTP health check and automatically rolls back a failed deployment.
+An archived build-report.txt artifact summarizing each build's result and any failed stages, usable for auditing pipeline reliability over time.
+Troubleshooting
+Symptom: emailext step throws an error such as ERROR: Could not connect to SMTP host. Diagnostic hint: Check Manage Jenkins > System > Extended E-mail Notification for correct SMTP host/port/credentials; in an isolated lab without real mail access, this failure is expected and does not invalidate the pipeline logic â confirm instead that the post block was entered by checking the console output text just before the error.
+Symptom: The Deploy stage's health check always fails, even though serve.py appears to start. Diagnostic hint: Run cat serve.log in the workspace and check whether port 8099 is already in use from a previous build (pkill -f serve.py should have cleaned it up) or whether curl is installed on the agent (which curl).
+Conclusion
+In this lab, you built progressively more sophisticated Jenkins pipelines for handling failures: starting with the built-in retry() step, moving to a manual exponential-backoff loop, and finally assembling a full set of reusable Groovy helper functions that track failed stages, send status notifications, and generate an auditable build report. You also implemented a realistic deploy-with-rollback pattern, where a deployed service is validated with an HTTP health check and automatically rolled back if it fails to respond correctly. These patternsâretries with backoff, centralized failure tracking, proactive notifications, and health-check-driven rollbackâare foundational techniques for building CI/CD pipelines that fail safely and recover gracefully rather than leaving systems in a broken state. As a next step, consider extending the health check to validate application-specific behavior beyond a simple status code, integrating a real messaging platform for notifications, and exploring Jenkins shared libraries so these helper functions can be reused across many pipelines instead of being copied into each Jenkinsfile.
