@@ -1,0 +1,474 @@
+Automating Jenkins with REST API
+Lab Objectives
+By the end of this lab, students will be able to:
+
+Install and configure Jenkins on a Linux machine
+Understand the Jenkins REST API architecture and authentication methods
+Create Jenkins jobs programmatically using REST API calls
+Trigger builds automatically through API endpoints and retrieve build status via REST API
+Update, verify, and safely delete Jenkins jobs through API automation
+Build a reusable shell-based test suite to validate an end-to-end API automation workflow
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Linux command line operations
+Familiarity with HTTP methods (GET, POST, PUT, DELETE)
+Basic knowledge of JSON data format
+Understanding of REST API concepts
+Experience with the curl command-line tool
+Basic shell scripting knowledge
+Familiarity with CI/CD concepts
+Required tools installed during the lab (commands provided in Task 1):
+
+sudo apt update
+sudo apt install -y openjdk-11-jdk curl jq
+Lab Environment
+Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated Linux machine. The provided machine is bare metal with no pre-installed tools, so you will install all required software during the lab exercises.
+
+Task 1: Setting Up Jenkins and the API Environment
+Subtask 1.1: Install Java, Jenkins, and Supporting Tools
+Install Java, since Jenkins requires it to run:
+
+# Update the system packages
+sudo apt update
+
+# Install OpenJDK 11
+sudo apt install -y openjdk-11-jdk
+
+# Verify Java installation
+java -version
+Install Jenkins:
+
+# Add Jenkins repository key
+wget -q -O - https://pkg.jenkins.io/debian-stable/jenkins.io.key | sudo apt-key add -
+
+# Add Jenkins repository
+sudo sh -c 'echo deb https://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
+
+# Update package list
+sudo apt update
+
+# Install Jenkins
+sudo apt install -y jenkins
+
+# Start Jenkins service
+sudo systemctl start jenkins
+
+# Enable Jenkins to start on boot
+sudo systemctl enable jenkins
+
+# Check Jenkins status
+sudo systemctl status jenkins
+Install curl and jq for API interactions:
+
+sudo apt install -y curl jq
+
+curl --version
+jq --version
+Complete the initial setup by retrieving the admin password:
+
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+Open a web browser and navigate to http://localhost:8080. Use the password above to unlock Jenkins, then:
+
+Select Install suggested plugins
+Create an admin user:
+Username: admin
+Password: admin123
+Full name: Jenkins Admin
+Email: admin@localhost
+Keep the default Jenkins URL: http://localhost:8080/
+Click Save and Finish
+Deliverable: sudo systemctl status jenkins shows active (running), and http://localhost:8080 loads the Jenkins dashboard after login.
+
+Subtask 1.2: Configure API Authentication
+Create an API token:
+
+Go to http://localhost:8080/user/admin/configure
+Scroll to the API Token section
+Click Add new Token, name it api-automation
+Click Generate and copy the token value
+Set up environment variables used throughout this lab:
+
+export JENKINS_URL="http://localhost:8080"
+export JENKINS_USER="admin"
+export JENKINS_TOKEN="your-generated-token-here"
+
+# Test authenticated API call
+curl -s -u $JENKINS_USER:$JENKINS_TOKEN $JENKINS_URL/api/json | jq '.version'
+Deliverable: The command above prints a version string, e.g. "2.401.3", confirming authenticated API access. Save these three export lines in ~/.jenkins_env and source ~/.jenkins_env at the start of every new terminal session for the rest of this lab.
+
+Task 2: Creating, Triggering, and Verifying Jobs via REST API
+Subtask 2.1: Create Freestyle and Parameterized Jobs
+Create a simple freestyle job:
+
+cat > simple-job-config.xml << 'EOF'
+<?xml version='1.1' encoding='UTF-8'?>
+<project>
+  <description>Simple job created via REST API</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <scm class="hudson.scm.NullSCM"/>
+  <canRoam>true</canRoam>
+  <disabled>false</disabled>
+  <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+  <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+  <triggers/>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+    <hudson.tasks.Shell>
+      <command>echo "Hello from Jenkins API!"
+echo "Build number: $BUILD_NUMBER"
+echo "Job name: $JOB_NAME"
+date</command>
+    </hudson.tasks.Shell>
+  </builders>
+  <publishers/>
+  <buildWrappers/>
+</project>
+EOF
+
+curl -s -X POST \
+  -u $JENKINS_USER:$JENKINS_TOKEN \
+  -H "Content-Type: application/xml" \
+  --data-binary @simple-job-config.xml \
+  "$JENKINS_URL/createItem?name=simple-api-job"
+
+curl -s -u $JENKINS_USER:$JENKINS_TOKEN \
+  "$JENKINS_URL/job/simple-api-job/api/json" | jq '.name'
+Create a parameterized job:
+
+cat > param-job-config.xml << 'EOF'
+<?xml version='1.1' encoding='UTF-8'?>
+<project>
+  <description>Parameterized job created via REST API</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.StringParameterDefinition>
+          <name>MESSAGE</name>
+          <description>Message to display</description>
+          <defaultValue>Hello World</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>ENVIRONMENT</name>
+          <description>Target environment</description>
+          <choices>
+            <string>development</string>
+            <string>staging</string>
+            <string>production</string>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <scm class="hudson.scm.NullSCM"/>
+  <canRoam>true</canRoam>
+  <disabled>false</disabled>
+  <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+  <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+  <triggers/>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+    <hudson.tasks.Shell>
+      <command>echo "Message: $MESSAGE"
+echo "Environment: $ENVIRONMENT"
+echo "Build started at: $(date)"
+sleep 5
+echo "Build completed at: $(date)"</command>
+    </hudson.tasks.Shell>
+  </builders>
+  <publishers/>
+  <buildWrappers/>
+</project>
+EOF
+
+curl -s -X POST \
+  -u $JENKINS_USER:$JENKINS_TOKEN \
+  -H "Content-Type: application/xml" \
+  --data-binary @param-job-config.xml \
+  "$JENKINS_URL/createItem?name=param-api-job"
+
+echo "Parameterized job created successfully"
+List all jobs:
+
+cat > list-jobs.sh << 'EOF'
+#!/bin/bash
+
+echo "=== Jenkins Jobs List ==="
+curl -s -u $JENKINS_USER:$JENKINS_TOKEN \
+  "$JENKINS_URL/api/json?tree=jobs[name,url,color]" | \
+  jq -r '.jobs[] | "\(.name) - Status: \(.color) - URL: \(.url)"'
+EOF
+
+chmod +x list-jobs.sh
+./list-jobs.sh
+Deliverable: list-jobs.sh prints two lines listing simple-api-job and param-api-job with their status color and URL.
+
+Subtask 2.2: Trigger Builds and Monitor Progress
+Trigger the simple job:
+
+curl -s -X POST \
+  -u $JENKINS_USER:$JENKINS_TOKEN \
+  "$JENKINS_URL/job/simple-api-job/build"
+
+echo "Build triggered for simple-api-job"
+
+sleep 5
+
+curl -s -u $JENKINS_USER:$JENKINS_TOKEN \
+  "$JENKINS_URL/job/simple-api-job/lastBuild/api/json" | \
+  jq '{number: .number, result: .result, building: .building}'
+Trigger the parameterized job with specific parameter values:
+
+curl -s -X POST \
+  -u $JENKINS_USER:$JENKINS_TOKEN \
+  -d "MESSAGE=API Automation Test" \
+  -d "ENVIRONMENT=staging" \
+  "$JENKINS_URL/job/param-api-job/buildWithParameters"
+
+echo "Parameterized build triggered"
+
+curl -s -u $JENKINS_USER:$JENKINS_TOKEN \
+  "$JENKINS_URL/queue/api/json" | \
+  jq '.items[] | {task: .task.name, why: .why}'
+Create a reusable build monitoring script:
+
+cat > monitor-build.sh << 'EOF'
+#!/bin/bash
+
+JOB_NAME=$1
+if [ -z "$JOB_NAME" ]; then
+    echo "Usage: $0 <job-name>"
+    exit 1
+fi
+
+echo "Monitoring job: $JOB_NAME"
+
+while true; do
+    BUILD_INFO=$(curl -s -u $JENKINS_USER:$JENKINS_TOKEN \
+        "$JENKINS_URL/job/$JOB_NAME/lastBuild/api/json")
+
+    BUILD_NUMBER=$(echo $BUILD_INFO | jq -r '.number')
+    IS_BUILDING=$(echo $BUILD_INFO | jq -r '.building')
+    RESULT=$(echo $BUILD_INFO | jq -r '.result')
+
+    echo "Build #$BUILD_NUMBER - Building: $IS_BUILDING - Result: $RESULT"
+
+    if [ "$IS_BUILDING" = "false" ]; then
+        echo "Build completed with result: $RESULT"
+        break
+    fi
+
+    sleep 5
+done
+EOF
+
+chmod +x monitor-build.sh
+./monitor-build.sh simple-api-job
+Deliverable: monitor-build.sh simple-api-job polls until the build finishes and prints Build completed with result: SUCCESS.
+
+Task 3: Updating, Validating, and Testing Jobs via REST API
+Subtask 3.1: Update Job Configuration and Verify the Change
+Retrieve the current configuration and save a backup:
+
+curl -s -u $JENKINS_USER:$JENKINS_TOKEN \
+    "$JENKINS_URL/job/simple-api-job/config.xml" > current-config.xml
+Create an updated configuration:
+
+cat > updated-job-config.xml << 'EOF'
+<?xml version='1.1' encoding='UTF-8'?>
+<project>
+  <description>Updated job via REST API - Now with more features!</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <scm class="hudson.scm.NullSCM"/>
+  <canRoam>true</canRoam>
+  <disabled>false</disabled>
+  <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+  <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+  <triggers/>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+    <hudson.tasks.Shell>
+      <command>echo "=== Updated Job Execution ==="
+echo "Hello from updated Jenkins API job!"
+echo "Build number: $BUILD_NUMBER"
+echo "Job name: $JOB_NAME"
+echo "Workspace: $WORKSPACE"
+echo "Build URL: $BUILD_URL"
+echo "Current date: $(date)"
+echo "System info: $(uname -a)"
+echo "=== End of Execution ==="</command>
+    </hudson.tasks.Shell>
+  </builders>
+  <publishers/>
+  <buildWrappers/>
+</project>
+EOF
+Push the update, then verify it took effect by diffing the live configuration against the file you submitted:
+
+curl -s -X POST \
+    -u $JENKINS_USER:$JENKINS_TOKEN \
+    -H "Content-Type: application/xml" \
+    --data-binary @updated-job-config.xml \
+    "$JENKINS_URL/job/simple-api-job/config.xml"
+
+echo "Job configuration submitted"
+
+# Verify the update was applied correctly
+curl -s -u $JENKINS_USER:$JENKINS_TOKEN \
+    "$JENKINS_URL/job/simple-api-job/config.xml" | \
+    diff -u updated-job-config.xml - && echo "Update verified"
+If the XML you submit is malformed (for example, an unclosed tag or invalid element), Jenkins responds with an HTTP 500 error and a stack trace instead of applying the change. Handle this case explicitly:
+
+# Attempt an update with intentionally malformed XML to observe error handling
+cat > broken-config.xml << 'EOF'
+<?xml version='1.1' encoding='UTF-8'?>
+<project>
+  <description>Broken config missing closing tag
+  <builders>
+    <hudson.tasks.Shell>
+      <command>echo "this will not apply"</command>
+    </hudson.tasks.Shell>
+  </builders>
+</project>
+EOF
+
+HTTP_STATUS=$(curl -s -o response-body.txt -w "%{http_code}" -X POST \
+    -u $JENKINS_USER:$JENKINS_TOKEN \
+    -H "Content-Type: application/xml" \
+    --data-binary @broken-config.xml \
+    "$JENKINS_URL/job/simple-api-job/config.xml")
+
+if [ "$HTTP_STATUS" = "200" ]; then
+    echo "Update applied successfully"
+else
+    echo "Update FAILED with HTTP status $HTTP_STATUS"
+    echo "Server response saved in response-body.txt for review"
+    echo "Restoring last known good configuration..."
+    curl -s -X POST \
+        -u $JENKINS_USER:$JENKINS_TOKEN \
+        -H "Content-Type: application/xml" \
+        --data-binary @updated-job-config.xml \
+        "$JENKINS_URL/job/simple-api-job/config.xml"
+    echo "Restore submitted"
+fi
+Deliverable: The first diff command prints Update verified with no diff output, confirming the live job configuration matches updated-job-config.xml exactly. The malformed-XML test prints Update FAILED with HTTP status 500 (or similar non-200 code) followed by a successful restore of the good configuration.
+
+Subtask 3.2: Build a Final Automated Test Suite
+Create a job deletion helper used for cleanup within the test suite:
+
+cat > delete-job.sh << 'EOF'
+#!/bin/bash
+
+JOB_NAME=$1
+
+if [ -z "$JOB_NAME" ]; then
+    echo "Usage: $0 <job-name>"
+    exit 1
+fi
+
+curl -s -X POST \
+    -u $JENKINS_USER:$JENKINS_TOKEN \
+    "$JENKINS_URL/job/$JOB_NAME/doDelete" > /dev/null
+
+echo "Job '$JOB_NAME' deleted"
+EOF
+
+chmod +x delete-job.sh
+Now build the complete, self-contained final test suite:
+
+cat > final-test.sh << 'EOF'
+#!/bin/bash
+
+echo "=== Jenkins API Automation - Final Test Suite ==="
+
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+# Test function: runs a command and records pass/fail
+run_test() {
+    local test_name="$1"
+    local test_command="$2"
+
+    echo -n "Testing $test_name... "
+
+    if eval "$test_command" > /dev/null 2>&1; then
+        echo "PASSED"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo "FAILED"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+}
+
+# Run tests covering the full API automation workflow
+run_test "Jenkins connectivity" \
+    "curl -s --connect-timeout 5 '$JENKINS_URL' > /dev/null"
+
+run_test "API authentication" \
+    "curl -s -u '$JENKINS_USER:$JENKINS_TOKEN' '$JENKINS_URL/api/json' | jq -e '.version' > /dev/null"
+
+run_test "Job listing" \
+    "curl -s -u '$JENKINS_USER:$JENKINS_TOKEN' '$JENKINS_URL/api/json' | jq -e '.jobs' > /dev/null"
+
+run_test "Job creation" \
+    "curl -s -X POST -u '$JENKINS_USER:$JENKINS_TOKEN' -H 'Content-Type: application/xml' --data '<project><builders><hudson.tasks.Shell><command>echo test</command></hudson.tasks.Shell></builders></project>' '$JENKINS_URL/createItem?name=final-test-job'"
+
+run_test "Build triggering" \
+    "curl -s -X POST -u '$JENKINS_USER:$JENKINS_TOKEN' '$JENKINS_URL/job/final-test-job/build'"
+
+# Give Jenkins a moment to register and run the triggered build
+sleep 5
+
+run_test "Build monitoring" \
+    "curl -s -u '$JENKINS_USER:$JENKINS_TOKEN' '$JENKINS_URL/job/final-test-job/lastBuild/api/json' | jq -e '.number' > /dev/null"
+
+run_test "Config retrieval" \
+    "curl -s -u '$JENKINS_USER:$JENKINS_TOKEN' '$JENKINS_URL/job/final-test-job/config.xml' | grep -q '<project>'"
+
+# Clean up test job regardless of test outcomes
+curl -s -X POST -u $JENKINS_USER:$JENKINS_TOKEN \
+    "$JENKINS_URL/job/final-test-job/doDelete" > /dev/null 2>&1
+
+echo ""
+echo "=== Test Results ==="
+echo "Tests Passed: $TESTS_PASSED"
+echo "Tests Failed: $TESTS_FAILED"
+echo "Total Tests: $((TESTS_PASSED + TESTS_FAILED))"
+
+if [ "$TESTS_FAILED" -eq 0 ]; then
+    echo ""
+    echo "SUCCESS: All Jenkins API automation tests passed."
+    echo "The environment is fully functional for API-driven job management."
+    exit 0
+else
+    echo ""
+    echo "FAILURE: $TESTS_FAILED test(s) failed."
+    echo "Review the output above, check jenkins-health-check style diagnostics,"
+    echo "and re-run ./final-test.sh after resolving the issue."
+    exit 1
+fi
+EOF
+
+chmod +x final-test.sh
+./final-test.sh
+Deliverable: Running ./final-test.sh prints a PASSED line for each of the seven tests, followed by:
+
+=== Test Results ===
+Tests Passed: 7
+Tests Failed: 0
+Total Tests: 7
+
+SUCCESS: All Jenkins API automation tests passed.
+The environment is fully functional for API-driven job management.
+The script exits with status code 0 (verify with echo $? immediately after running it). If any test fails, the script exits with status code 1 and prints the FAILURE block instead, naming how many tests failed.
+
+Expected Outcomes
+A running Jenkins instance with API token authentication configured, and two working jobs (simple-api-job, param-api-job) created entirely through REST API calls
+Working shell scripts (list-jobs.sh, monitor-build.sh, delete-job.sh, final-test.sh) that create, trigger, monitor, update, verify, and clean up Jenkins jobs via the API
+A demonstrated understanding of how to detect and recover from a failed configuration update caused by malformed XML
+Conclusion
+In this lab, you installed and configured Jenkins from scratch, secured API access with token-based authentication, and used curl and jq to create, parameterize, trigger, and monitor jobs entirely through the Jenkins REST API. You then went further than basic CRUD operations by verifying configuration updates with a diff-based check and by deliberately submitting malformed XML to observe and handle a real HTTP 500 failure, restoring the last known good configuration afterward. Finally, you assembled everything into a single automated test suite that exercises the full API workflow, reports pass/fail counts, and exits with a meaningful status code suitable for use in a larger CI/CD pipeline. From here, natural next steps include wiring final-test.sh into a scheduled cron job or an upstream Jenkins pipeline stage, extending the test suite to cover pipeline (Jenkinsfile) jobs via the job/.../doDelete and createItem endpoints, and exploring Jenkins' crumb-based CSRF protection for production environments where API automation must coexist with stricter security settings.
